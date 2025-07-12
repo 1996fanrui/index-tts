@@ -489,12 +489,55 @@ class IndexTTS:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             torchaudio.save(output_path, wav.type(torch.int16), sampling_rate)
             print(">> wav file saved to:", output_path)
+            
+            # --- Begin SRT Generation ---
+            try:
+                srt_path = os.path.splitext(output_path)[0] + ".srt"
+                # In fast mode, sentences are bucketed, so we need to flatten them back
+                original_sentences = [None] * len(all_idxs)
+                for bucket in all_sentences:
+                    for item in bucket:
+                        original_sentences[item['idx']] = item['sent']
+
+                self.generate_srt(srt_path, original_sentences, all_latents, sampling_rate)
+                print(">> srt file saved to:", srt_path)
+            except Exception as e:
+                print(f">> Failed to generate SRT file: {e}")
+            # --- End SRT Generation ---
+
             return output_path
         else:
             # 返回以符合Gradio的格式要求
             wav_data = wav.type(torch.int16)
             wav_data = wav_data.numpy().T
             return (sampling_rate, wav_data)
+
+    def generate_srt(self, srt_path, sentences, all_latents, sampling_rate):
+        def format_time(seconds):
+            """Converts seconds to SRT time format HH:MM:SS,ms"""
+            hours, remainder = divmod(seconds, 3600)
+            minutes, remainder = divmod(remainder, 60)
+            seconds, milliseconds = divmod(remainder, 1)
+            return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02},{int(milliseconds*1000):03}"
+
+        total_duration_s = 0
+        with open(srt_path, 'w', encoding='utf-8') as srt_file:
+            for i, (sentence_tokens, latent) in enumerate(zip(sentences, all_latents), 1):
+                # The duration of a latent is its length * mel_length_compression / sampling_rate
+                duration_s = latent.shape[1] * self.gpt.mel_length_compression / sampling_rate
+                
+                start_time = total_duration_s
+                end_time = total_duration_s + duration_s
+                
+                # Decode sentence tokens to string
+                sentence_text = self.tokenizer.decode(self.tokenizer.convert_tokens_to_ids(sentence_tokens))
+
+                srt_file.write(f"{i}\n")
+                srt_file.write(f"{format_time(start_time)} --> {format_time(end_time)}\n")
+                srt_file.write(f"{sentence_text.strip()}\n\n")
+                
+                total_duration_s = end_time
+
 
     # 原始推理模式
     def infer(self, audio_prompt, text, output_path, verbose=False, max_text_tokens_per_sentence=120, **generation_kwargs):
@@ -545,6 +588,7 @@ class IndexTTS:
         # lang = "EN"
         # lang = "ZH"
         wavs = []
+        all_latents = [] # <--- Add this line
         gpt_gen_time = 0
         gpt_forward_time = 0
         bigvgan_time = 0
@@ -617,6 +661,7 @@ class IndexTTS:
                                     code_lens*self.gpt.mel_length_compression,
                                     cond_mel_lengths=torch.tensor([auto_conditioning.shape[-1]], device=text_tokens.device),
                                     return_latent=True, clip_inputs=False)
+                    all_latents.append(latent) # <--- Add this line
                     gpt_forward_time += time.perf_counter() - m_start_time
 
                     m_start_time = time.perf_counter()
@@ -652,6 +697,16 @@ class IndexTTS:
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
             torchaudio.save(output_path, wav.type(torch.int16), sampling_rate)
             print(">> wav file saved to:", output_path)
+
+            # --- Begin SRT Generation ---
+            try:
+                srt_path = os.path.splitext(output_path)[0] + ".srt"
+                self.generate_srt(srt_path, sentences, all_latents, sampling_rate)
+                print(">> srt file saved to:", srt_path)
+            except Exception as e:
+                print(f">> Failed to generate SRT file: {e}")
+            # --- End SRT Generation ---
+
             return output_path
         else:
             # 返回以符合Gradio的格式要求
