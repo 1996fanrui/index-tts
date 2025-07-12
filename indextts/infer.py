@@ -22,6 +22,100 @@ from indextts.utils.feature_extractors import MelSpectrogramFeatures
 
 from indextts.utils.front import TextNormalizer, TextTokenizer
 
+# Configuration for punctuation marks to remove from TTS input
+# These characters can cause unwanted pauses in speech synthesis
+TTS_PUNCTUATION_TO_REMOVE = {
+    # Dots (except for sentence endings)
+    '.': '',  # Will be handled specially to preserve sentence endings
+    
+    # English quotation marks
+    '"': '',
+    "'": '',
+    '\u201C': '',  # " Left double quotation mark
+    '\u201D': '',  # " Right double quotation mark
+    '\u2018': '',  # ' Left single quotation mark
+    '\u2019': '',  # ' Right single quotation mark
+    
+    # Chinese quotation marks
+    '「': '',
+    '」': '',
+    '『': '',
+    '』': '',
+    
+    # Chinese book title marks
+    '《': '',
+    '》': '',
+    '〈': '',
+    '〉': '',
+    
+    # Dashes
+    '-': '',
+    '—': '',
+    '–': '',
+    '～': '',
+    
+    # Parentheses and brackets
+    '(': '',
+    ')': '',
+    '[': '',
+    ']': '',
+    '{': '',
+    '}': '',
+    '（': '',
+    '）': '',
+    '【': '',
+    '】': '',
+    '〔': '',
+    '〕': '',
+    '［': '',
+    '］': '',
+    
+    # Additional symbols that might affect TTS
+    '*': '',
+    '#': '',
+    '@': '',
+    '&': '',
+    '\\': '',
+    '|': '',
+    '^': '',
+    '~': '',
+    '`': '',
+    '·': '',
+}
+
+def remove_tts_punctuation(text):
+    """
+    Removes punctuation marks that can cause unwanted pauses in TTS.
+    Preserves basic sentence punctuation (commas, periods, question marks, exclamation marks).
+    """
+    if not text:
+        return text
+    
+    # Handle dots specially - only remove if not at sentence end
+    import re
+    
+    # First, check if the text ends with a typical sentence ending
+    has_sentence_ending = bool(re.search(r'[.!?。！？]\s*$', text))
+    
+    # Remove dots in abbreviations
+    # 1. Dot between letters (e.g., "J.K." -> "JK")
+    text = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', '', text)
+    
+    # 2. Dot after letter followed by space and uppercase (e.g., "Dr. Smith" -> "Dr Smith")
+    text = re.sub(r'(?<=[A-Za-z])\.(?=\s+[A-Z])', '', text)
+    
+    # 3. Dot at the end after uppercase letters (abbreviations like "U.S.A.")
+    # Only if it doesn't look like a sentence ending
+    if not has_sentence_ending or not re.search(r'[a-z]\.\s*$', text):
+        text = re.sub(r'(?<=[A-Z])\.(?=\s*$)', '', text)
+    
+    # Remove other punctuation marks
+    for char, replacement in TTS_PUNCTUATION_TO_REMOVE.items():
+        if char != '.':  # Skip dot as we handled it above
+            text = text.replace(char, replacement)
+    
+    return text
+
 
 class IndexTTS:
     def __init__(
@@ -315,11 +409,13 @@ class IndexTTS:
         cond_mel_lengths = torch.tensor([cond_mel_frame], device=self.device)
 
         # text_tokens
-        text_tokens_list = self.tokenizer.tokenize(text)
+        # Split sentences from the original text to ensure alignment
+        original_text_tokens_list = self.tokenizer.tokenize(text)
+        sentences = self.tokenizer.split_sentences(original_text_tokens_list, max_tokens_per_sentence=max_text_tokens_per_sentence)
+        original_sentences = sentences # For SRT, they are the same now
 
-        sentences = self.tokenizer.split_sentences(text_tokens_list, max_tokens_per_sentence=max_text_tokens_per_sentence)
         if verbose:
-            print(">> text token count:", len(text_tokens_list))
+            print(">> text token count:", len(original_text_tokens_list))
             print("   splited sentences count:", len(sentences))
             print("   max_text_tokens_per_sentence:", max_text_tokens_per_sentence)
             print(*sentences, sep="\n")
@@ -354,15 +450,19 @@ class IndexTTS:
             temp_tokens: List[torch.Tensor] = []
             all_text_tokens.append(temp_tokens)
             for item in sentences:
-                sent = item["sent"]
-                text_tokens = self.tokenizer.convert_tokens_to_ids(sent)
+                sent_tokens = item["sent"]
+                # Clean up punctuation for TTS right before converting to IDs
+                sent_text = self.tokenizer.decode(self.tokenizer.convert_tokens_to_ids(sent_tokens))
+                cleaned_sent_text = remove_tts_punctuation(sent_text)
+                text_tokens = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(cleaned_sent_text))
+
                 text_tokens = torch.tensor(text_tokens, dtype=torch.int32, device=self.device).unsqueeze(0)
                 if verbose:
                     print(text_tokens)
                     print(f"text_tokens shape: {text_tokens.shape}, text_tokens type: {text_tokens.dtype}")
                     # debug tokenizer
                     text_token_syms = self.tokenizer.convert_ids_to_tokens(text_tokens[0].tolist())
-                    print("text_token_syms is same as sentence tokens", text_token_syms == sent) 
+                    print("text_token_syms is same as sentence tokens", text_token_syms == sent_tokens) 
                 temp_tokens.append(text_tokens)
         
             
@@ -494,12 +594,19 @@ class IndexTTS:
             try:
                 srt_path = os.path.splitext(output_path)[0] + ".srt"
                 # In fast mode, sentences are bucketed, so we need to flatten them back
-                original_sentences = [None] * len(all_idxs)
+                
+                # Reorder original_sentences to match the order of latents
+                ordered_original_sentences = [None] * len(all_idxs)
+                original_sentences_map = {i: sent for i, sent in enumerate(original_sentences)}
+                
+                # The bucketing was done on the original sentences, so indices match
                 for bucket in all_sentences:
                     for item in bucket:
-                        original_sentences[item['idx']] = item['sent']
+                        idx = item['idx']
+                        if idx < len(ordered_original_sentences):
+                             ordered_original_sentences[idx] = original_sentences_map[idx]
 
-                self.generate_srt(srt_path, original_sentences, all_latents, sampling_rate)
+                self.generate_srt(srt_path, ordered_original_sentences, all_latents, sampling_rate)
                 print(">> srt file saved to:", srt_path)
             except Exception as e:
                 print(f">> Failed to generate SRT file: {e}")
@@ -568,10 +675,14 @@ class IndexTTS:
 
         self._set_gr_progress(0.1, "text processing...")
         auto_conditioning = cond_mel
-        text_tokens_list = self.tokenizer.tokenize(text)
-        sentences = self.tokenizer.split_sentences(text_tokens_list, max_text_tokens_per_sentence)
+        
+        # Split sentences from the original text to ensure alignment
+        original_text_tokens_list = self.tokenizer.tokenize(text)
+        sentences = self.tokenizer.split_sentences(original_text_tokens_list, max_text_tokens_per_sentence)
+        original_sentences = sentences # For SRT
+
         if verbose:
-            print("text token count:", len(text_tokens_list))
+            print("text token count:", len(original_text_tokens_list))
             print("sentences count:", len(sentences))
             print("max_text_tokens_per_sentence:", max_text_tokens_per_sentence)
             print(*sentences, sep="\n")
@@ -595,7 +706,11 @@ class IndexTTS:
         progress = 0
         has_warned = False
         for sent in sentences:
-            text_tokens = self.tokenizer.convert_tokens_to_ids(sent)
+            # Clean up punctuation for TTS right before converting to IDs
+            sent_text = self.tokenizer.decode(self.tokenizer.convert_tokens_to_ids(sent))
+            cleaned_sent_text = remove_tts_punctuation(sent_text)
+            text_tokens = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(cleaned_sent_text))
+
             text_tokens = torch.tensor(text_tokens, dtype=torch.int32, device=self.device).unsqueeze(0)
             # text_tokens = F.pad(text_tokens, (0, 1))  # This may not be necessary.
             # text_tokens = F.pad(text_tokens, (1, 0), value=0)
@@ -701,7 +816,7 @@ class IndexTTS:
             # --- Begin SRT Generation ---
             try:
                 srt_path = os.path.splitext(output_path)[0] + ".srt"
-                self.generate_srt(srt_path, sentences, all_latents, sampling_rate)
+                self.generate_srt(srt_path, original_sentences, all_latents, sampling_rate)
                 print(">> srt file saved to:", srt_path)
             except Exception as e:
                 print(f">> Failed to generate SRT file: {e}")
