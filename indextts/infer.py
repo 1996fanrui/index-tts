@@ -367,6 +367,54 @@ class IndexTTS:
     def _set_gr_progress(self, value, desc):
         if self.gr_progress is not None:
             self.gr_progress(value, desc=desc)
+    
+    def _extract_original_sentences(self, original_text, normalized_sentences):
+        """
+        Extract original sentences from the original text based on sentence boundaries.
+        This preserves all original punctuation and formatting.
+        """
+        import re
+        
+        # Split original text by sentence-ending punctuation
+        # Include the punctuation in the sentence
+        sentence_pattern = r'[^。！？.!?\n]+[。！？.!?\n]?'
+        original_parts = re.findall(sentence_pattern, original_text)
+        
+        # Clean up empty parts and strip whitespace
+        original_parts = [part.strip() for part in original_parts if part.strip()]
+        
+        # If no sentences found, treat the whole text as one sentence
+        if not original_parts:
+            original_parts = [original_text.strip()]
+        
+        # Match the number of sentences from normalized tokenization
+        # This ensures alignment between TTS processing and SRT
+        if len(original_parts) == len(normalized_sentences):
+            return original_parts
+        elif len(original_parts) > len(normalized_sentences):
+            # Merge some sentences
+            merged = []
+            parts_per_sentence = len(original_parts) // len(normalized_sentences)
+            remainder = len(original_parts) % len(normalized_sentences)
+            
+            idx = 0
+            for i in range(len(normalized_sentences)):
+                count = parts_per_sentence + (1 if i < remainder else 0)
+                merged_sentence = ' '.join(original_parts[idx:idx+count])
+                merged.append(merged_sentence)
+                idx += count
+            
+            return merged
+        else:
+            # We have fewer original parts than normalized sentences
+            # This might happen with very long sentences that get split
+            # In this case, use the normalized sentences as fallback
+            result = []
+            for sent_tokens in normalized_sentences:
+                sent_ids = self.tokenizer.convert_tokens_to_ids(sent_tokens)
+                sent_text = self.tokenizer.decode(sent_ids).strip()
+                result.append(sent_text)
+            return result
 
     # 快速推理：对于“多句长文本”，可实现至少 2~10 倍以上的速度提升~ （First modified by sunnyboxs 2025-04-16）
     def infer_fast(self, audio_prompt, text, output_path, verbose=False, max_text_tokens_per_sentence=100, sentences_bucket_max_size=4, **generation_kwargs):
@@ -409,13 +457,19 @@ class IndexTTS:
         cond_mel_lengths = torch.tensor([cond_mel_frame], device=self.device)
 
         # text_tokens
-        # Split sentences from the original text to ensure alignment
-        original_text_tokens_list = self.tokenizer.tokenize(text)
-        sentences = self.tokenizer.split_sentences(original_text_tokens_list, max_tokens_per_sentence=max_text_tokens_per_sentence)
-        original_sentences = sentences # For SRT, they are the same now
+        # Store original text for SRT generation
+        original_text = text
+        
+        # For TTS processing, use normalized tokens
+        normalized_text_tokens_list = self.tokenizer.tokenize(text)
+        sentences = self.tokenizer.split_sentences(normalized_text_tokens_list, max_tokens_per_sentence=max_text_tokens_per_sentence)
+        
+        # Extract original sentences based on character positions
+        # This approach preserves all original punctuation and formatting
+        original_sentences = self._extract_original_sentences(original_text, sentences)
 
         if verbose:
-            print(">> text token count:", len(original_text_tokens_list))
+            print(">> text token count:", len(normalized_text_tokens_list))
             print("   splited sentences count:", len(sentences))
             print("   max_text_tokens_per_sentence:", max_text_tokens_per_sentence)
             print(*sentences, sep="\n")
@@ -597,14 +651,11 @@ class IndexTTS:
                 
                 # Reorder original_sentences to match the order of latents
                 ordered_original_sentences = [None] * len(all_idxs)
-                original_sentences_map = {i: sent for i, sent in enumerate(original_sentences)}
                 
-                # The bucketing was done on the original sentences, so indices match
-                for bucket in all_sentences:
-                    for item in bucket:
-                        idx = item['idx']
-                        if idx < len(ordered_original_sentences):
-                             ordered_original_sentences[idx] = original_sentences_map[idx]
+                # Use all_idxs to reorder original_sentences
+                for i, idx in enumerate(all_idxs):
+                    if idx < len(original_sentences):
+                        ordered_original_sentences[i] = original_sentences[idx]
 
                 self.generate_srt(srt_path, ordered_original_sentences, all_latents, sampling_rate)
                 print(">> srt file saved to:", srt_path)
@@ -629,15 +680,15 @@ class IndexTTS:
 
         total_duration_s = 0
         with open(srt_path, 'w', encoding='utf-8') as srt_file:
-            for i, (sentence_tokens, latent) in enumerate(zip(sentences, all_latents), 1):
+            for i, (sentence, latent) in enumerate(zip(sentences, all_latents), 1):
                 # The duration of a latent is its length * mel_length_compression / sampling_rate
                 duration_s = latent.shape[1] * self.gpt.mel_length_compression / sampling_rate
                 
                 start_time = total_duration_s
                 end_time = total_duration_s + duration_s
                 
-                # Decode sentence tokens to string
-                sentence_text = self.tokenizer.decode(self.tokenizer.convert_tokens_to_ids(sentence_tokens))
+                # sentence is already a string (original text)
+                sentence_text = sentence
 
                 srt_file.write(f"{i}\n")
                 srt_file.write(f"{format_time(start_time)} --> {format_time(end_time)}\n")
@@ -676,13 +727,19 @@ class IndexTTS:
         self._set_gr_progress(0.1, "text processing...")
         auto_conditioning = cond_mel
         
-        # Split sentences from the original text to ensure alignment
-        original_text_tokens_list = self.tokenizer.tokenize(text)
-        sentences = self.tokenizer.split_sentences(original_text_tokens_list, max_text_tokens_per_sentence)
-        original_sentences = sentences # For SRT
+        # Store original text for SRT generation
+        original_text = text
+        
+        # For TTS processing, use normalized tokens
+        normalized_text_tokens_list = self.tokenizer.tokenize(text)
+        sentences = self.tokenizer.split_sentences(normalized_text_tokens_list, max_text_tokens_per_sentence)
+        
+        # Extract original sentences based on character positions
+        # This approach preserves all original punctuation and formatting
+        original_sentences = self._extract_original_sentences(original_text, sentences)
 
         if verbose:
-            print("text token count:", len(original_text_tokens_list))
+            print("text token count:", len(normalized_text_tokens_list))
             print("sentences count:", len(sentences))
             print("max_text_tokens_per_sentence:", max_text_tokens_per_sentence)
             print(*sentences, sep="\n")
