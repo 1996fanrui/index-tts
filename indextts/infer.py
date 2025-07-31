@@ -598,6 +598,7 @@ class IndexTTS:
                             current_ratio = first_stop_position / codes.size(-1)
                         else:
                             current_ratio = 1.0
+                            first_stop_position = codes.size(-1)
                         
                         # 保存当前尝试
                         all_attempts.append({
@@ -605,6 +606,13 @@ class IndexTTS:
                             'ratio': current_ratio,
                             'retry': retry_count
                         })
+                        
+                        # 打印当前尝试的截断占比
+                        position_info = f"{first_stop_position}" if current_ratio < 1.0 else "full"
+                        if 'i' in locals():
+                            print(f"[ATTEMPT {retry_count}] Sentence {i}: Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
+                        else:
+                            print(f"[ATTEMPT {retry_count}] Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
                         
                         codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
                         break  # 成功（ratio >= 0.9），退出重试循环
@@ -641,6 +649,15 @@ class IndexTTS:
                             if all_attempts:
                                 # 选择截断比例最高的结果
                                 best_attempt = max(all_attempts, key=lambda x: x['ratio'])
+                                
+                                # 检查最佳结果是否达到70%的阈值
+                                if best_attempt['ratio'] < 0.7:
+                                    attempts_info = [(a['retry'], f"{a['ratio']*100:.1f}%") for a in all_attempts]
+                                    print(f"[ERROR] Sentence {i}: All {len(all_attempts)} attempts failed to reach 70% completion threshold")
+                                    print(f"[ERROR] All attempts: {attempts_info}")
+                                    print(f"[ERROR] Best attempt only reached {best_attempt['ratio']*100:.1f}% completion")
+                                    raise RuntimeError(f"Failed to generate complete speech after {len(all_attempts)} attempts. Best completion ratio: {best_attempt['ratio']*100:.1f}%")
+                                
                                 codes = best_attempt['codes']
                                 print(f"[BEST RESULT] Sentence {i}: Selected attempt {best_attempt['retry']} with {best_attempt['ratio']*100:.1f}% completion")
                                 attempts_info = [(a['retry'], f"{a['ratio']*100:.1f}%") for a in all_attempts]
@@ -917,6 +934,7 @@ class IndexTTS:
                             current_ratio = first_stop_position / codes.size(-1)
                         else:
                             current_ratio = 1.0
+                            first_stop_position = codes.size(-1)
                         
                         # 保存当前尝试
                         all_attempts.append({
@@ -924,6 +942,13 @@ class IndexTTS:
                             'ratio': current_ratio,
                             'retry': retry_count
                         })
+                        
+                        # 打印当前尝试的截断占比
+                        position_info = f"{first_stop_position}" if current_ratio < 1.0 else "full"
+                        if 'i' in locals():
+                            print(f"[ATTEMPT {retry_count}] Sentence {i}: Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
+                        else:
+                            print(f"[ATTEMPT {retry_count}] Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
                         
                         codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
                         break  # 成功（ratio >= 0.9），退出重试循环
@@ -959,6 +984,15 @@ class IndexTTS:
                             if all_attempts:
                                 # 选择截断比例最高的结果
                                 best_attempt = max(all_attempts, key=lambda x: x['ratio'])
+                                
+                                # 检查最佳结果是否达到70%的阈值
+                                if best_attempt['ratio'] < 0.7:
+                                    attempts_info = [(a['retry'], f"{a['ratio']*100:.1f}%") for a in all_attempts]
+                                    print(f"[ERROR] All {len(all_attempts)} attempts failed to reach 70% completion threshold")
+                                    print(f"[ERROR] All attempts: {attempts_info}")
+                                    print(f"[ERROR] Best attempt only reached {best_attempt['ratio']*100:.1f}% completion")
+                                    raise RuntimeError(f"Failed to generate complete speech after {len(all_attempts)} attempts. Best completion ratio: {best_attempt['ratio']*100:.1f}%")
+                                
                                 codes = best_attempt['codes']
                                 print(f"[BEST RESULT] Selected attempt {best_attempt['retry']} with {best_attempt['ratio']*100:.1f}% completion")
                                 attempts_info = [(a['retry'], f"{a['ratio']*100:.1f}%") for a in all_attempts]
