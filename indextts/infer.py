@@ -239,7 +239,20 @@ class IndexTTS:
                 len_ = code.size(0)
             else:
                 stop_mel_idx = (code == self.stop_mel_token).nonzero(as_tuple=False)
-                len_ = stop_mel_idx[0].item() if len(stop_mel_idx) > 0 else code.size(0)
+                first_stop_position = stop_mel_idx[0].item() if len(stop_mel_idx) > 0 else code.size(0)
+                
+                # 计算截断位置的百分比
+                truncation_ratio = first_stop_position / code.size(0)
+                
+                # 检查stop_mel_token是否过早出现
+                if truncation_ratio < 0.7:  # 如果在前70%就出现
+                    # 抛出异常，让上层处理重试
+                    raise RuntimeError(f"Early stop_mel_token detected at {truncation_ratio*100:.1f}% (position {first_stop_position}/{code.size(0)}). This likely indicates truncated speech generation.")
+                elif truncation_ratio < 0.85:
+                    # 可疑位置，打印警告
+                    print(f"[WARNING] stop_mel_token at {truncation_ratio*100:.1f}% - might be early termination")
+                
+                len_ = first_stop_position
 
             count = torch.sum(code == silent_token).item()
             if count > max_consecutive:
@@ -571,7 +584,18 @@ class IndexTTS:
                 if verbose:
                     print("codes:", codes.shape)
                     print(codes)
-                codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
+                # 添加重试机制处理早期截断
+                try:
+                    codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
+                except RuntimeError as e:
+                    if "Early stop_mel_token" in str(e):
+                        print(f"[ERROR] {e}")
+                        print(f"[ERROR] Sentence {i}: Early truncation detected. Consider adjusting generation parameters.")
+                        # 在快速模式下，记录错误但继续处理
+                        # 使用全长度避免丢失内容
+                        code_lens = torch.tensor([codes.shape[-1]], device=codes.device, dtype=codes.dtype)
+                    else:
+                        raise  # 其他错误继续抛出
                 if verbose:
                     print("fix codes:", codes.shape)
                     print(codes)
@@ -818,7 +842,45 @@ class IndexTTS:
 
                 # remove ultra-long silence if exits
                 # temporarily fix the long silence bug.
-                codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
+                # 添加重试机制处理早期截断
+                max_retries = 3
+                retry_count = 0
+                while retry_count < max_retries:
+                    try:
+                        codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
+                        break  # 成功，退出重试循环
+                    except RuntimeError as e:
+                        if "Early stop_mel_token" in str(e) and retry_count < max_retries - 1:
+                            retry_count += 1
+                            print(f"[RETRY {retry_count}/{max_retries}] {e}")
+                            print(f"[RETRY {retry_count}/{max_retries}] Regenerating with adjusted parameters...")
+                            
+                            # 调整参数重新生成
+                            adjusted_temperature = max(0.3, temperature * 0.7)  # 降低温度
+                            adjusted_repetition_penalty = min(30.0, repetition_penalty * 1.5)  # 增加重复惩罚
+                            
+                            # 重新生成codes
+                            with torch.no_grad():
+                                with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
+                                    codes = self.gpt.inference_speech(auto_conditioning, text_tokens,
+                                                                        cond_mel_lengths=torch.tensor([auto_conditioning.shape[-1]],
+                                                                                                      device=text_tokens.device),
+                                                                        do_sample=do_sample,
+                                                                        top_p=top_p,
+                                                                        top_k=top_k,
+                                                                        temperature=adjusted_temperature,
+                                                                        num_return_sequences=autoregressive_batch_size,
+                                                                        length_penalty=length_penalty,
+                                                                        num_beams=num_beams,
+                                                                        repetition_penalty=adjusted_repetition_penalty,
+                                                                        max_generate_length=max_mel_tokens,
+                                                                        **generation_kwargs)
+                        else:
+                            # 已达最大重试次数或其他错误，使用原始代码避免截断
+                            print(f"[ERROR] {e}")
+                            print("[FALLBACK] Using full length to avoid truncation")
+                            code_lens = torch.tensor([codes.shape[-1]], device=codes.device, dtype=codes.dtype)
+                            break
                 if verbose:
                     print(codes, type(codes))
                     print(f"fix codes shape: {codes.shape}, codes type: {codes.dtype}")
