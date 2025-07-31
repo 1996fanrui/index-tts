@@ -226,6 +226,32 @@ text="大家好，我现在正在bilibili 体验 ai 科技，说实话，来之�
 tts.infer(voice, text, output_path)
 ```
 
+### Updating/Upgrading after Code Changes
+
+If you have made changes to the code or pulled updates from the repository, you need to reinstall the package:
+
+```bash
+# Make sure you are in the project directory
+cd index-tts
+
+# Reinstall the package in editable mode
+pip install -e . --upgrade
+
+# If you have modified dependencies, you may need to force reinstall
+pip install -e . --upgrade --force-reinstall
+
+# If you encounter issues, you can uninstall first then reinstall
+pip uninstall indextts
+pip install -e .
+```
+
+> [!NOTE]
+> Since the package is installed in editable mode (`-e`), most code changes will take effect immediately without reinstallation. However, you need to reinstall if you:
+> - Modified `setup.py` or `pyproject.toml`
+> - Changed package structure or added new modules
+> - Updated dependencies
+> - Want to ensure all changes are properly applied
+
 ## Acknowledge
 1. [tortoise-tts](https://github.com/neonbjb/tortoise-tts)
 2. [XTTSv2](https://github.com/coqui-ai/TTS)
