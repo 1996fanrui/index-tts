@@ -430,7 +430,7 @@ class IndexTTS:
             return result
 
     # 快速推理：对于“多句长文本”，可实现至少 2~10 倍以上的速度提升~ （First modified by sunnyboxs 2025-04-16）
-    def infer_fast(self, audio_prompt, text, output_path, verbose=False, max_text_tokens_per_sentence=500, sentences_bucket_max_size=4, **generation_kwargs):
+    def infer_fast(self, audio_prompt, text, output_path, verbose=False, max_text_tokens_per_sentence=300, sentences_bucket_max_size=4, **generation_kwargs):
         """
         Args:
             ``max_text_tokens_per_sentence``: 分句的最大token数，默认``100``，可以根据GPU硬件情况调整
@@ -494,9 +494,16 @@ class IndexTTS:
         length_penalty = generation_kwargs.pop("length_penalty", 0.0)
         num_beams = generation_kwargs.pop("num_beams", 3)
         repetition_penalty = generation_kwargs.pop("repetition_penalty", 10.0)
-        # 动态计算max_mel_tokens，确保能容纳长句子（5倍余量）
-        default_max_mel = max(600, max_text_tokens_per_sentence * 5)  # 至少600，或文本tokens的5倍
+        # 动态计算max_mel_tokens，但不能超过模型训练时的限制
+        # 模型配置中 max_mel_tokens=605, max_text_tokens=402
+        model_max_mel_tokens = self.cfg.gpt.max_mel_tokens  # 605
+        default_max_mel = min(model_max_mel_tokens - 5, max(600, max_text_tokens_per_sentence * 3))  # 留5个token余量，避免越界
         max_mel_tokens = generation_kwargs.pop("max_mel_tokens", default_max_mel)
+        
+        # 确保不超过模型限制
+        if max_mel_tokens > model_max_mel_tokens - 5:
+            print(f"[WARNING] Requested max_mel_tokens ({max_mel_tokens}) exceeds model limit ({model_max_mel_tokens}), capping to {model_max_mel_tokens - 5}")
+            max_mel_tokens = model_max_mel_tokens - 5
         sampling_rate = 24000
         # lang = "EN"
         # lang = "ZH"
@@ -830,7 +837,7 @@ class IndexTTS:
 
 
     # 原始推理模式
-    def infer(self, audio_prompt, text, output_path, verbose=False, max_text_tokens_per_sentence=500, **generation_kwargs):
+    def infer(self, audio_prompt, text, output_path, verbose=False, max_text_tokens_per_sentence=200, **generation_kwargs):
         print(">> start inference...")
         self._set_gr_progress(0, "start inference...")
         if verbose:
@@ -883,9 +890,16 @@ class IndexTTS:
         length_penalty = generation_kwargs.pop("length_penalty", 0.0)
         num_beams = generation_kwargs.pop("num_beams", 3)
         repetition_penalty = generation_kwargs.pop("repetition_penalty", 10.0)
-        # 动态计算max_mel_tokens，确保能容纳长句子（5倍余量）
-        default_max_mel = max(600, max_text_tokens_per_sentence * 5)  # 至少600，或文本tokens的5倍
+        # 动态计算max_mel_tokens，但不能超过模型训练时的限制
+        # 模型配置中 max_mel_tokens=605, max_text_tokens=402
+        model_max_mel_tokens = self.cfg.gpt.max_mel_tokens  # 605
+        default_max_mel = min(model_max_mel_tokens - 5, max(600, max_text_tokens_per_sentence * 3))  # 留5个token余量，避免越界
         max_mel_tokens = generation_kwargs.pop("max_mel_tokens", default_max_mel)
+        
+        # 确保不超过模型限制
+        if max_mel_tokens > model_max_mel_tokens - 5:
+            print(f"[WARNING] Requested max_mel_tokens ({max_mel_tokens}) exceeds model limit ({model_max_mel_tokens}), capping to {model_max_mel_tokens - 5}")
+            max_mel_tokens = model_max_mel_tokens - 5
         sampling_rate = 24000
         # lang = "EN"
         # lang = "ZH"

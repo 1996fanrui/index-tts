@@ -247,6 +247,10 @@ class LearnedPositionEmbeddings(nn.Module):
         return self.emb(torch.arange(0, sl, device=x.device))
 
     def get_fixed_embedding(self, ind, dev):
+        # 添加边界检查，避免索引越界
+        if ind >= self.emb.num_embeddings:
+            print(f"[WARNING] Position index {ind} exceeds embedding size {self.emb.num_embeddings}, using last position")
+            ind = self.emb.num_embeddings - 1
         return self.emb(torch.tensor([ind], device=dev)).unsqueeze(0)
 
 
