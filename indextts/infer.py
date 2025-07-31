@@ -638,32 +638,7 @@ class IndexTTS:
                         print(f"[DEBUG] codes[-1]={codes.flatten()[-1].item() if codes_len > 0 else 'empty'}, stop_mel_token={self.stop_mel_token}")
                         print(f"[DEBUG] Has stop token: {(codes == self.stop_mel_token).any().item()}")
                         
-                        # 检查异常情况
-                        should_retry = False
-                        retry_reason = ""
-                        
-                        # 1. 检查是否达到max_mel_tokens
-                        if codes_len >= max_mel_tokens:
-                            should_retry = True
-                            retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
-                        
-                        # 2. 检查静音占比是否过高
-                        elif silence_ratio > 0.5:  # 超过50%是静音
-                            should_retry = True
-                            retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
-                        
-                        # 3. 检查末尾是否有超长静音段
-                        elif silence_segments and silence_segments[-1][1] == len(codes_flat):
-                            last_silence_ratio = silence_segments[-1][2] / codes_len
-                            if last_silence_ratio > 0.3:  # 末尾静音超过30%
-                                should_retry = True
-                                retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
-                        
-                        if should_retry and retry_count < max_retries:
-                            print(f"[WARNING] {retry_reason} - likely incomplete generation")
-                            raise RuntimeError(f"{retry_reason}. This likely indicates incomplete generation.")
-                        
-                        # 统计静音token的数量和连续静音段
+                        # 统计静音token的数量和连续静音段（移到检查之前）
                         silence_count = (codes == 52).sum().item()
                         silence_ratio = silence_count / codes_len if codes_len > 0 else 0
                         print(f"[DEBUG] Silence tokens: {silence_count}/{codes_len} ({silence_ratio*100:.1f}%)")
@@ -694,12 +669,32 @@ class IndexTTS:
                             print(f"[DEBUG] Found {len(silence_segments)} long silence segments:")
                             for start, end, length in silence_segments[:3]:  # 只显示前3个
                                 print(f"  - Position {start}-{end}: {length} tokens ({length/codes_len*100:.1f}% of total)")
-                            
-                            # 检查末尾是否有超长静音段
-                            if silence_segments and silence_segments[-1][1] == len(codes_flat):
-                                last_silence_ratio = silence_segments[-1][2] / codes_len
-                                if last_silence_ratio > 0.3:  # 如果末尾静音超过30%
-                                    print(f"[WARNING] Large silence segment at end: {last_silence_ratio*100:.1f}% of total length")
+                        
+                        # 检查异常情况
+                        should_retry = False
+                        retry_reason = ""
+                        
+                        # 1. 检查是否达到max_mel_tokens
+                        if codes_len >= max_mel_tokens:
+                            should_retry = True
+                            retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
+                        
+                        # 2. 检查静音占比是否过高
+                        elif silence_ratio > 0.5:  # 超过50%是静音
+                            should_retry = True
+                            retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
+                        
+                        # 3. 检查末尾是否有超长静音段
+                        elif silence_segments and silence_segments[-1][1] == len(codes_flat):
+                            last_silence_ratio = silence_segments[-1][2] / codes_len
+                            if last_silence_ratio > 0.3:  # 末尾静音超过30%
+                                should_retry = True
+                                retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
+                        
+                        if should_retry and retry_count < max_retries:
+                            print(f"[WARNING] {retry_reason} - likely incomplete generation")
+                            raise RuntimeError(f"{retry_reason}. This likely indicates incomplete generation.")
+                        
                         
                         # 分析token分布
                         unique_tokens, counts = torch.unique(codes, return_counts=True)
@@ -717,7 +712,7 @@ class IndexTTS:
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
-                        if ("Early stop_mel_token" in str(e) or "hit max_mel_tokens" in str(e)) and retry_count < max_retries:
+                        if ("Early stop_mel_token" in str(e) or "max_mel_tokens" in str(e)) and retry_count < max_retries:
                             retry_count += 1
                             print(f"[RETRY {retry_count}/{max_retries}] Sentence {i}: {e}")
                             print(f"[RETRY {retry_count}/{max_retries}] Regenerating with adjusted parameters...")
@@ -1073,32 +1068,7 @@ class IndexTTS:
                         print(f"[DEBUG] codes[-1]={codes.flatten()[-1].item() if codes_len > 0 else 'empty'}, stop_mel_token={self.stop_mel_token}")
                         print(f"[DEBUG] Has stop token: {(codes == self.stop_mel_token).any().item()}")
                         
-                        # 检查异常情况
-                        should_retry = False
-                        retry_reason = ""
-                        
-                        # 1. 检查是否达到max_mel_tokens
-                        if codes_len >= max_mel_tokens:
-                            should_retry = True
-                            retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
-                        
-                        # 2. 检查静音占比是否过高
-                        elif silence_ratio > 0.5:  # 超过50%是静音
-                            should_retry = True
-                            retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
-                        
-                        # 3. 检查末尾是否有超长静音段
-                        elif silence_segments and silence_segments[-1][1] == len(codes_flat):
-                            last_silence_ratio = silence_segments[-1][2] / codes_len
-                            if last_silence_ratio > 0.3:  # 末尾静音超过30%
-                                should_retry = True
-                                retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
-                        
-                        if should_retry and retry_count < max_retries:
-                            print(f"[WARNING] {retry_reason} - likely incomplete generation")
-                            raise RuntimeError(f"{retry_reason}. This likely indicates incomplete generation.")
-                        
-                        # 统计静音token的数量和连续静音段
+                        # 统计静音token的数量和连续静音段（移到检查之前）
                         silence_count = (codes == 52).sum().item()
                         silence_ratio = silence_count / codes_len if codes_len > 0 else 0
                         print(f"[DEBUG] Silence tokens: {silence_count}/{codes_len} ({silence_ratio*100:.1f}%)")
@@ -1129,12 +1099,32 @@ class IndexTTS:
                             print(f"[DEBUG] Found {len(silence_segments)} long silence segments:")
                             for start, end, length in silence_segments[:3]:  # 只显示前3个
                                 print(f"  - Position {start}-{end}: {length} tokens ({length/codes_len*100:.1f}% of total)")
-                            
-                            # 检查末尾是否有超长静音段
-                            if silence_segments and silence_segments[-1][1] == len(codes_flat):
-                                last_silence_ratio = silence_segments[-1][2] / codes_len
-                                if last_silence_ratio > 0.3:  # 如果末尾静音超过30%
-                                    print(f"[WARNING] Large silence segment at end: {last_silence_ratio*100:.1f}% of total length")
+                        
+                        # 检查异常情况
+                        should_retry = False
+                        retry_reason = ""
+                        
+                        # 1. 检查是否达到max_mel_tokens
+                        if codes_len >= max_mel_tokens:
+                            should_retry = True
+                            retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
+                        
+                        # 2. 检查静音占比是否过高
+                        elif silence_ratio > 0.5:  # 超过50%是静音
+                            should_retry = True
+                            retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
+                        
+                        # 3. 检查末尾是否有超长静音段
+                        elif silence_segments and silence_segments[-1][1] == len(codes_flat):
+                            last_silence_ratio = silence_segments[-1][2] / codes_len
+                            if last_silence_ratio > 0.3:  # 末尾静音超过30%
+                                should_retry = True
+                                retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
+                        
+                        if should_retry and retry_count < max_retries:
+                            print(f"[WARNING] {retry_reason} - likely incomplete generation")
+                            raise RuntimeError(f"{retry_reason}. This likely indicates incomplete generation.")
+                        
                         
                         # 分析token分布
                         unique_tokens, counts = torch.unique(codes, return_counts=True)
@@ -1152,7 +1142,7 @@ class IndexTTS:
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
-                        if ("Early stop_mel_token" in str(e) or "hit max_mel_tokens" in str(e)) and retry_count < max_retries:
+                        if ("Early stop_mel_token" in str(e) or "max_mel_tokens" in str(e)) and retry_count < max_retries:
                             retry_count += 1
                             print(f"[RETRY {retry_count}/{max_retries}] {e}")
                             print(f"[RETRY {retry_count}/{max_retries}] Regenerating with adjusted parameters...")
