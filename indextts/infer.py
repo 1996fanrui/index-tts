@@ -614,11 +614,17 @@ class IndexTTS:
                         else:
                             print(f"[ATTEMPT {retry_count}] Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
                         
+                        # 检查是否达到max_mel_tokens但没有stop_mel_token（异常情况）
+                        if codes.size(-1) >= max_mel_tokens and codes[-1] != self.stop_mel_token:
+                            if retry_count < max_retries:
+                                print(f"[WARNING] Hit max_mel_tokens ({max_mel_tokens}) without stop token - likely incomplete generation")
+                                raise RuntimeError(f"Generation hit max_mel_tokens ({max_mel_tokens}) without proper stop token. This likely indicates incomplete generation.")
+                        
                         codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
-                        if "Early stop_mel_token" in str(e) and retry_count < max_retries:
+                        if ("Early stop_mel_token" in str(e) or "hit max_mel_tokens" in str(e)) and retry_count < max_retries:
                             retry_count += 1
                             print(f"[RETRY {retry_count}/{max_retries}] Sentence {i}: {e}")
                             print(f"[RETRY {retry_count}/{max_retries}] Regenerating with adjusted parameters...")
@@ -950,11 +956,17 @@ class IndexTTS:
                         else:
                             print(f"[ATTEMPT {retry_count}] Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
                         
+                        # 检查是否达到max_mel_tokens但没有stop_mel_token（异常情况）
+                        if codes.size(-1) >= max_mel_tokens and codes[-1] != self.stop_mel_token:
+                            if retry_count < max_retries:
+                                print(f"[WARNING] Hit max_mel_tokens ({max_mel_tokens}) without stop token - likely incomplete generation")
+                                raise RuntimeError(f"Generation hit max_mel_tokens ({max_mel_tokens}) without proper stop token. This likely indicates incomplete generation.")
+                        
                         codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
-                        if "Early stop_mel_token" in str(e) and retry_count < max_retries:
+                        if ("Early stop_mel_token" in str(e) or "hit max_mel_tokens" in str(e)) and retry_count < max_retries:
                             retry_count += 1
                             print(f"[RETRY {retry_count}/{max_retries}] {e}")
                             print(f"[RETRY {retry_count}/{max_retries}] Regenerating with adjusted parameters...")
