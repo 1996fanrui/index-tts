@@ -494,7 +494,9 @@ class IndexTTS:
         length_penalty = generation_kwargs.pop("length_penalty", 0.0)
         num_beams = generation_kwargs.pop("num_beams", 3)
         repetition_penalty = generation_kwargs.pop("repetition_penalty", 10.0)
-        max_mel_tokens = generation_kwargs.pop("max_mel_tokens", 600)
+        # 动态计算max_mel_tokens，确保能容纳长句子（5倍余量）
+        default_max_mel = max(600, max_text_tokens_per_sentence * 5)  # 至少600，或文本tokens的5倍
+        max_mel_tokens = generation_kwargs.pop("max_mel_tokens", default_max_mel)
         sampling_rate = 24000
         # lang = "EN"
         # lang = "ZH"
@@ -614,13 +616,35 @@ class IndexTTS:
                         else:
                             print(f"[ATTEMPT {retry_count}] Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
                         
+                        # 添加调试日志
+                        print(f"[DEBUG] codes.size(-1)={codes.size(-1)}, max_mel_tokens={max_mel_tokens}")
+                        print(f"[DEBUG] codes[-1]={codes[-1].item() if codes.size(-1) > 0 else 'empty'}, stop_mel_token={self.stop_mel_token}")
+                        print(f"[DEBUG] Has stop token: {(codes == self.stop_mel_token).any().item()}")
+                        
                         # 检查是否达到max_mel_tokens但没有stop_mel_token（异常情况）
                         if codes.size(-1) >= max_mel_tokens and codes[-1] != self.stop_mel_token:
                             if retry_count < max_retries:
                                 print(f"[WARNING] Hit max_mel_tokens ({max_mel_tokens}) without stop token - likely incomplete generation")
                                 raise RuntimeError(f"Generation hit max_mel_tokens ({max_mel_tokens}) without proper stop token. This likely indicates incomplete generation.")
                         
+                        # 统计静音token的数量
+                        silence_count = (codes == 52).sum().item()
+                        silence_ratio = silence_count / codes.size(-1) if codes.size(-1) > 0 else 0
+                        print(f"[DEBUG] Silence tokens: {silence_count}/{codes.size(-1)} ({silence_ratio*100:.1f}%)")
+                        
+                        # 分析token分布
+                        unique_tokens, counts = torch.unique(codes, return_counts=True)
+                        top_5_tokens = []
+                        if len(unique_tokens) > 0:
+                            sorted_indices = torch.argsort(counts, descending=True)[:5]
+                            for idx in sorted_indices:
+                                token = unique_tokens[idx].item()
+                                count = counts[idx].item()
+                                top_5_tokens.append(f"token_{token}:{count}")
+                        print(f"[DEBUG] Top 5 tokens: {', '.join(top_5_tokens)}")
+                        
                         codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
+                        print(f"[DEBUG] After remove_long_silence: code_lens={code_lens}")
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
@@ -859,7 +883,9 @@ class IndexTTS:
         length_penalty = generation_kwargs.pop("length_penalty", 0.0)
         num_beams = generation_kwargs.pop("num_beams", 3)
         repetition_penalty = generation_kwargs.pop("repetition_penalty", 10.0)
-        max_mel_tokens = generation_kwargs.pop("max_mel_tokens", 600)
+        # 动态计算max_mel_tokens，确保能容纳长句子（5倍余量）
+        default_max_mel = max(600, max_text_tokens_per_sentence * 5)  # 至少600，或文本tokens的5倍
+        max_mel_tokens = generation_kwargs.pop("max_mel_tokens", default_max_mel)
         sampling_rate = 24000
         # lang = "EN"
         # lang = "ZH"
@@ -956,13 +982,35 @@ class IndexTTS:
                         else:
                             print(f"[ATTEMPT {retry_count}] Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
                         
+                        # 添加调试日志
+                        print(f"[DEBUG] codes.size(-1)={codes.size(-1)}, max_mel_tokens={max_mel_tokens}")
+                        print(f"[DEBUG] codes[-1]={codes[-1].item() if codes.size(-1) > 0 else 'empty'}, stop_mel_token={self.stop_mel_token}")
+                        print(f"[DEBUG] Has stop token: {(codes == self.stop_mel_token).any().item()}")
+                        
                         # 检查是否达到max_mel_tokens但没有stop_mel_token（异常情况）
                         if codes.size(-1) >= max_mel_tokens and codes[-1] != self.stop_mel_token:
                             if retry_count < max_retries:
                                 print(f"[WARNING] Hit max_mel_tokens ({max_mel_tokens}) without stop token - likely incomplete generation")
                                 raise RuntimeError(f"Generation hit max_mel_tokens ({max_mel_tokens}) without proper stop token. This likely indicates incomplete generation.")
                         
+                        # 统计静音token的数量
+                        silence_count = (codes == 52).sum().item()
+                        silence_ratio = silence_count / codes.size(-1) if codes.size(-1) > 0 else 0
+                        print(f"[DEBUG] Silence tokens: {silence_count}/{codes.size(-1)} ({silence_ratio*100:.1f}%)")
+                        
+                        # 分析token分布
+                        unique_tokens, counts = torch.unique(codes, return_counts=True)
+                        top_5_tokens = []
+                        if len(unique_tokens) > 0:
+                            sorted_indices = torch.argsort(counts, descending=True)[:5]
+                            for idx in sorted_indices:
+                                token = unique_tokens[idx].item()
+                                count = counts[idx].item()
+                                top_5_tokens.append(f"token_{token}:{count}")
+                        print(f"[DEBUG] Top 5 tokens: {', '.join(top_5_tokens)}")
+                        
                         codes, code_lens = self.remove_long_silence(codes, silent_token=52, max_consecutive=30)
+                        print(f"[DEBUG] After remove_long_silence: code_lens={code_lens}")
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
