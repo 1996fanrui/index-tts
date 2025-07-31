@@ -643,7 +643,8 @@ class IndexTTS:
                                 best_attempt = max(all_attempts, key=lambda x: x['ratio'])
                                 codes = best_attempt['codes']
                                 print(f"[BEST RESULT] Sentence {i}: Selected attempt {best_attempt['retry']} with {best_attempt['ratio']*100:.1f}% completion")
-                                print(f"[BEST RESULT] All attempts: {[(a['retry'], f\"{a['ratio']*100:.1f}%\") for a in all_attempts]}")
+                                attempts_info = [(a['retry'], f"{a['ratio']*100:.1f}%") for a in all_attempts]
+                                print(f"[BEST RESULT] All attempts: {attempts_info}")
                                 
                                 # 使用最佳结果的实际长度
                                 if (codes == self.stop_mel_token).any():
@@ -960,7 +961,8 @@ class IndexTTS:
                                 best_attempt = max(all_attempts, key=lambda x: x['ratio'])
                                 codes = best_attempt['codes']
                                 print(f"[BEST RESULT] Selected attempt {best_attempt['retry']} with {best_attempt['ratio']*100:.1f}% completion")
-                                print(f"[BEST RESULT] All attempts: {[(a['retry'], f\"{a['ratio']*100:.1f}%\") for a in all_attempts]}")
+                                attempts_info = [(a['retry'], f"{a['ratio']*100:.1f}%") for a in all_attempts]
+                                print(f"[BEST RESULT] All attempts: {attempts_info}")
                                 
                                 # 使用最佳结果的实际长度
                                 if (codes == self.stop_mel_token).any():
