@@ -105,3 +105,74 @@ except RuntimeError as e:
 5. 选择所有尝试中最好的结果，如果都低于70%阈值则报错
 
 这样可以有效避免接受那些明显有问题的生成结果，提高语音生成的稳定性。
+
+## 静音检测策略
+
+在进一步的优化中，我们添加了基于静音分析的重试策略：
+
+### 静音token识别
+- 静音token ID: 52
+- 这是IndexTTS中表示静音的特殊token
+
+### 检测策略
+
+1. **总体静音占比统计**
+   ```python
+   silence_count = (codes == 52).sum().item()
+   silence_ratio = silence_count / codes_len
+   ```
+   - 统计所有token中静音token的数量
+   - 计算静音占比
+   - 如果超过50%，触发重试
+
+2. **连续静音段分析**
+   ```python
+   # 遍历所有tokens，找出连续的静音段
+   for i in range(len(codes_flat)):
+       if codes_flat[i] == 52:  # 静音token
+           if current_silence_start is None:
+               current_silence_start = i
+       else:
+           if current_silence_start is not None:
+               silence_length = i - current_silence_start
+               if silence_length >= 10:  # 只记录超过10个token的静音段
+                   silence_segments.append((current_silence_start, i, silence_length))
+   ```
+   - 识别连续的静音token序列
+   - 只记录长度>=10的静音段（避免正常的短暂停顿）
+   - 记录每个静音段的起始位置、结束位置和长度
+
+3. **末尾静音检测**
+   ```python
+   if silence_segments and silence_segments[-1][1] == len(codes_flat):
+       last_silence_ratio = silence_segments[-1][2] / codes_len
+       if last_silence_ratio > 0.3:  # 末尾静音超过30%
+           should_retry = True
+   ```
+   - 特别关注音频末尾的静音
+   - 如果最后一个静音段延续到结尾，且占比超过30%，触发重试
+   - 这能捕获"25秒音频但只有前2秒有声音"的情况
+
+### 重试触发优先级
+
+1. **最高优先级**：达到`max_mel_tokens`（600）上限
+2. **次优先级**：总体静音占比>50%
+3. **第三优先级**：末尾静音占比>30%
+
+### 实际效果
+
+通过这些策略，系统能够：
+- 检测各种异常的静音模式
+- 避免生成大部分是静音的音频
+- 自动重试并调整生成参数
+- 最终输出高质量的语音
+
+例如，当检测到问题时，日志会显示：
+```
+[DEBUG] Silence tokens: 450/600 (75.0%)
+[DEBUG] Found 1 long silence segments:
+  - Position 50-600: 550 tokens (91.7% of total)
+[WARNING] Large silence at end: 91.7% of total length
+[WARNING] High silence ratio: 75.0% - likely incomplete generation
+[RETRY 1/3] High silence ratio: 75.0%. This likely indicates incomplete generation.
+```
