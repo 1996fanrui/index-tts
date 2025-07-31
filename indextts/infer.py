@@ -498,7 +498,16 @@ class IndexTTS:
         # 模型配置中 max_mel_tokens=605, max_text_tokens=402
         model_max_mel_tokens = self.cfg.gpt.max_mel_tokens  # 605
         default_max_mel = min(model_max_mel_tokens - 5, max(600, max_text_tokens_per_sentence * 3))  # 留5个token余量，避免越界
+        
+        # 调试信息
+        print(f"[DEBUG] model_max_mel_tokens from config: {model_max_mel_tokens}")
+        print(f"[DEBUG] max_text_tokens_per_sentence: {max_text_tokens_per_sentence}")
+        print(f"[DEBUG] calculated default_max_mel: {default_max_mel}")
+        print(f"[DEBUG] generation_kwargs before pop: {generation_kwargs}")
+        
         max_mel_tokens = generation_kwargs.pop("max_mel_tokens", default_max_mel)
+        
+        print(f"[DEBUG] max_mel_tokens after pop: {max_mel_tokens}")
         
         # 确保不超过模型限制
         if max_mel_tokens > model_max_mel_tokens - 5:
@@ -624,20 +633,73 @@ class IndexTTS:
                             print(f"[ATTEMPT {retry_count}] Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
                         
                         # 添加调试日志
-                        print(f"[DEBUG] codes.size(-1)={codes.size(-1)}, max_mel_tokens={max_mel_tokens}")
-                        print(f"[DEBUG] codes[-1]={codes[-1].item() if codes.size(-1) > 0 else 'empty'}, stop_mel_token={self.stop_mel_token}")
+                        codes_len = codes.shape[-1] if codes.dim() > 1 else codes.shape[0]
+                        print(f"[DEBUG] codes shape: {codes.shape}, codes_len={codes_len}, max_mel_tokens={max_mel_tokens}")
+                        print(f"[DEBUG] codes[-1]={codes.flatten()[-1].item() if codes_len > 0 else 'empty'}, stop_mel_token={self.stop_mel_token}")
                         print(f"[DEBUG] Has stop token: {(codes == self.stop_mel_token).any().item()}")
                         
-                        # 检查是否达到max_mel_tokens但没有stop_mel_token（异常情况）
-                        if codes.size(-1) >= max_mel_tokens and codes[-1] != self.stop_mel_token:
-                            if retry_count < max_retries:
-                                print(f"[WARNING] Hit max_mel_tokens ({max_mel_tokens}) without stop token - likely incomplete generation")
-                                raise RuntimeError(f"Generation hit max_mel_tokens ({max_mel_tokens}) without proper stop token. This likely indicates incomplete generation.")
+                        # 检查异常情况
+                        should_retry = False
+                        retry_reason = ""
                         
-                        # 统计静音token的数量
+                        # 1. 检查是否达到max_mel_tokens
+                        if codes_len >= max_mel_tokens:
+                            should_retry = True
+                            retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
+                        
+                        # 2. 检查静音占比是否过高
+                        elif silence_ratio > 0.5:  # 超过50%是静音
+                            should_retry = True
+                            retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
+                        
+                        # 3. 检查末尾是否有超长静音段
+                        elif silence_segments and silence_segments[-1][1] == len(codes_flat):
+                            last_silence_ratio = silence_segments[-1][2] / codes_len
+                            if last_silence_ratio > 0.3:  # 末尾静音超过30%
+                                should_retry = True
+                                retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
+                        
+                        if should_retry and retry_count < max_retries:
+                            print(f"[WARNING] {retry_reason} - likely incomplete generation")
+                            raise RuntimeError(f"{retry_reason}. This likely indicates incomplete generation.")
+                        
+                        # 统计静音token的数量和连续静音段
                         silence_count = (codes == 52).sum().item()
-                        silence_ratio = silence_count / codes.size(-1) if codes.size(-1) > 0 else 0
-                        print(f"[DEBUG] Silence tokens: {silence_count}/{codes.size(-1)} ({silence_ratio*100:.1f}%)")
+                        silence_ratio = silence_count / codes_len if codes_len > 0 else 0
+                        print(f"[DEBUG] Silence tokens: {silence_count}/{codes_len} ({silence_ratio*100:.1f}%)")
+                        
+                        # 分析连续静音段
+                        codes_flat = codes.flatten()
+                        silence_segments = []
+                        current_silence_start = None
+                        
+                        for i in range(len(codes_flat)):
+                            if codes_flat[i] == 52:  # 静音token
+                                if current_silence_start is None:
+                                    current_silence_start = i
+                            else:
+                                if current_silence_start is not None:
+                                    silence_length = i - current_silence_start
+                                    if silence_length >= 10:  # 只记录超过10个token的静音段
+                                        silence_segments.append((current_silence_start, i, silence_length))
+                                    current_silence_start = None
+                        
+                        # 处理结尾的静音段
+                        if current_silence_start is not None:
+                            silence_length = len(codes_flat) - current_silence_start
+                            if silence_length >= 10:
+                                silence_segments.append((current_silence_start, len(codes_flat), silence_length))
+                        
+                        if silence_segments:
+                            print(f"[DEBUG] Found {len(silence_segments)} long silence segments:")
+                            for start, end, length in silence_segments[:3]:  # 只显示前3个
+                                print(f"  - Position {start}-{end}: {length} tokens ({length/codes_len*100:.1f}% of total)")
+                            
+                            # 检查末尾是否有超长静音段
+                            if silence_segments and silence_segments[-1][1] == len(codes_flat):
+                                last_silence_ratio = silence_segments[-1][2] / codes_len
+                                if last_silence_ratio > 0.3:  # 如果末尾静音超过30%
+                                    print(f"[WARNING] Large silence segment at end: {last_silence_ratio*100:.1f}% of total length")
                         
                         # 分析token分布
                         unique_tokens, counts = torch.unique(codes, return_counts=True)
@@ -894,7 +956,16 @@ class IndexTTS:
         # 模型配置中 max_mel_tokens=605, max_text_tokens=402
         model_max_mel_tokens = self.cfg.gpt.max_mel_tokens  # 605
         default_max_mel = min(model_max_mel_tokens - 5, max(600, max_text_tokens_per_sentence * 3))  # 留5个token余量，避免越界
+        
+        # 调试信息
+        print(f"[DEBUG] model_max_mel_tokens from config: {model_max_mel_tokens}")
+        print(f"[DEBUG] max_text_tokens_per_sentence: {max_text_tokens_per_sentence}")
+        print(f"[DEBUG] calculated default_max_mel: {default_max_mel}")
+        print(f"[DEBUG] generation_kwargs before pop: {generation_kwargs}")
+        
         max_mel_tokens = generation_kwargs.pop("max_mel_tokens", default_max_mel)
+        
+        print(f"[DEBUG] max_mel_tokens after pop: {max_mel_tokens}")
         
         # 确保不超过模型限制
         if max_mel_tokens > model_max_mel_tokens - 5:
@@ -997,20 +1068,73 @@ class IndexTTS:
                             print(f"[ATTEMPT {retry_count}] Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
                         
                         # 添加调试日志
-                        print(f"[DEBUG] codes.size(-1)={codes.size(-1)}, max_mel_tokens={max_mel_tokens}")
-                        print(f"[DEBUG] codes[-1]={codes[-1].item() if codes.size(-1) > 0 else 'empty'}, stop_mel_token={self.stop_mel_token}")
+                        codes_len = codes.shape[-1] if codes.dim() > 1 else codes.shape[0]
+                        print(f"[DEBUG] codes shape: {codes.shape}, codes_len={codes_len}, max_mel_tokens={max_mel_tokens}")
+                        print(f"[DEBUG] codes[-1]={codes.flatten()[-1].item() if codes_len > 0 else 'empty'}, stop_mel_token={self.stop_mel_token}")
                         print(f"[DEBUG] Has stop token: {(codes == self.stop_mel_token).any().item()}")
                         
-                        # 检查是否达到max_mel_tokens但没有stop_mel_token（异常情况）
-                        if codes.size(-1) >= max_mel_tokens and codes[-1] != self.stop_mel_token:
-                            if retry_count < max_retries:
-                                print(f"[WARNING] Hit max_mel_tokens ({max_mel_tokens}) without stop token - likely incomplete generation")
-                                raise RuntimeError(f"Generation hit max_mel_tokens ({max_mel_tokens}) without proper stop token. This likely indicates incomplete generation.")
+                        # 检查异常情况
+                        should_retry = False
+                        retry_reason = ""
                         
-                        # 统计静音token的数量
+                        # 1. 检查是否达到max_mel_tokens
+                        if codes_len >= max_mel_tokens:
+                            should_retry = True
+                            retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
+                        
+                        # 2. 检查静音占比是否过高
+                        elif silence_ratio > 0.5:  # 超过50%是静音
+                            should_retry = True
+                            retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
+                        
+                        # 3. 检查末尾是否有超长静音段
+                        elif silence_segments and silence_segments[-1][1] == len(codes_flat):
+                            last_silence_ratio = silence_segments[-1][2] / codes_len
+                            if last_silence_ratio > 0.3:  # 末尾静音超过30%
+                                should_retry = True
+                                retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
+                        
+                        if should_retry and retry_count < max_retries:
+                            print(f"[WARNING] {retry_reason} - likely incomplete generation")
+                            raise RuntimeError(f"{retry_reason}. This likely indicates incomplete generation.")
+                        
+                        # 统计静音token的数量和连续静音段
                         silence_count = (codes == 52).sum().item()
-                        silence_ratio = silence_count / codes.size(-1) if codes.size(-1) > 0 else 0
-                        print(f"[DEBUG] Silence tokens: {silence_count}/{codes.size(-1)} ({silence_ratio*100:.1f}%)")
+                        silence_ratio = silence_count / codes_len if codes_len > 0 else 0
+                        print(f"[DEBUG] Silence tokens: {silence_count}/{codes_len} ({silence_ratio*100:.1f}%)")
+                        
+                        # 分析连续静音段
+                        codes_flat = codes.flatten()
+                        silence_segments = []
+                        current_silence_start = None
+                        
+                        for i in range(len(codes_flat)):
+                            if codes_flat[i] == 52:  # 静音token
+                                if current_silence_start is None:
+                                    current_silence_start = i
+                            else:
+                                if current_silence_start is not None:
+                                    silence_length = i - current_silence_start
+                                    if silence_length >= 10:  # 只记录超过10个token的静音段
+                                        silence_segments.append((current_silence_start, i, silence_length))
+                                    current_silence_start = None
+                        
+                        # 处理结尾的静音段
+                        if current_silence_start is not None:
+                            silence_length = len(codes_flat) - current_silence_start
+                            if silence_length >= 10:
+                                silence_segments.append((current_silence_start, len(codes_flat), silence_length))
+                        
+                        if silence_segments:
+                            print(f"[DEBUG] Found {len(silence_segments)} long silence segments:")
+                            for start, end, length in silence_segments[:3]:  # 只显示前3个
+                                print(f"  - Position {start}-{end}: {length} tokens ({length/codes_len*100:.1f}% of total)")
+                            
+                            # 检查末尾是否有超长静音段
+                            if silence_segments and silence_segments[-1][1] == len(codes_flat):
+                                last_silence_ratio = silence_segments[-1][2] / codes_len
+                                if last_silence_ratio > 0.3:  # 如果末尾静音超过30%
+                                    print(f"[WARNING] Large silence segment at end: {last_silence_ratio*100:.1f}% of total length")
                         
                         # 分析token分布
                         unique_tokens, counts = torch.unique(codes, return_counts=True)
