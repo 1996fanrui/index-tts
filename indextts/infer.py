@@ -712,7 +712,7 @@ class IndexTTS:
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
-                        if ("Early stop_mel_token" in str(e) or "max_mel_tokens" in str(e)) and retry_count < max_retries:
+                        if should_retry and retry_count < max_retries:
                             retry_count += 1
                             print(f"[RETRY {retry_count}/{max_retries}] Sentence {i}: {e}")
                             print(f"[RETRY {retry_count}/{max_retries}] Regenerating with adjusted parameters...")
@@ -1142,7 +1142,7 @@ class IndexTTS:
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
-                        if ("Early stop_mel_token" in str(e) or "max_mel_tokens" in str(e)) and retry_count < max_retries:
+                        if should_retry and retry_count < max_retries:
                             retry_count += 1
                             print(f"[RETRY {retry_count}/{max_retries}] {e}")
                             print(f"[RETRY {retry_count}/{max_retries}] Regenerating with adjusted parameters...")
