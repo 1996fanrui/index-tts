@@ -680,14 +680,14 @@ class IndexTTS:
                             retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
                         
                         # 2. 检查静音占比是否过高
-                        elif silence_ratio > 0.5:  # 超过50%是静音
+                        elif silence_ratio > 0.2 and silence_count > 10:  # 超过20%是静音
                             should_retry = True
                             retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
                         
                         # 3. 检查末尾是否有超长静音段
                         elif silence_segments and silence_segments[-1][1] == len(codes_flat):
                             last_silence_ratio = silence_segments[-1][2] / codes_len
-                            if last_silence_ratio > 0.3:  # 末尾静音超过30%
+                            if last_silence_ratio > 0.1 and silence_count > 10:  # 末尾静音超过10%
                                 should_retry = True
                                 retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
                         
@@ -1110,14 +1110,14 @@ class IndexTTS:
                             retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
                         
                         # 2. 检查静音占比是否过高
-                        elif silence_ratio > 0.5:  # 超过50%是静音
+                        elif silence_ratio > 0.2 and silence_count > 10:  # 超过20%是静音
                             should_retry = True
                             retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
                         
                         # 3. 检查末尾是否有超长静音段
                         elif silence_segments and silence_segments[-1][1] == len(codes_flat):
                             last_silence_ratio = silence_segments[-1][2] / codes_len
-                            if last_silence_ratio > 0.3:  # 末尾静音超过30%
+                            if last_silence_ratio > 0.1 and silence_count > 10:  # 末尾静音超过10%
                                 should_retry = True
                                 retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
                         
