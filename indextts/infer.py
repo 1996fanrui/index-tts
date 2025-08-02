@@ -22,6 +22,10 @@ from indextts.utils.feature_extractors import MelSpectrogramFeatures
 
 from indextts.utils.front import TextNormalizer, TextTokenizer
 
+RETRY_THRESHOLD_FOR_WHOLE_SILENCE_RATIO=0.2
+RETRY_THRESHOLD_FOR_ENDING_SILENCE_RATIO=0.1
+RETRY_THRESHOLD_FOR_SILENCE_LENGTH=10
+
 # Configuration for punctuation marks to remove from TTS input
 # These characters can cause unwanted pauses in speech synthesis
 TTS_PUNCTUATION_TO_REMOVE = {
@@ -680,14 +684,14 @@ class IndexTTS:
                             retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
                         
                         # 2. 检查静音占比是否过高
-                        elif silence_ratio > 0.2 and silence_count > 10:  # 超过20%是静音
+                        elif silence_ratio > RETRY_THRESHOLD_FOR_WHOLE_SILENCE_RATIO and silence_count > RETRY_THRESHOLD_FOR_SILENCE_LENGTH:  # 超过20%是静音
                             should_retry = True
                             retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
                         
                         # 3. 检查末尾是否有超长静音段
                         elif silence_segments and silence_segments[-1][1] == len(codes_flat):
                             last_silence_ratio = silence_segments[-1][2] / codes_len
-                            if last_silence_ratio > 0.1 and silence_count > 10:  # 末尾静音超过10%
+                            if last_silence_ratio > RETRY_THRESHOLD_FOR_ENDING_SILENCE_RATIO and silence_count > RETRY_THRESHOLD_FOR_SILENCE_LENGTH:  # 末尾静音超过10%
                                 should_retry = True
                                 retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
                         
@@ -1110,14 +1114,14 @@ class IndexTTS:
                             retry_reason = f"Hit max_mel_tokens ({max_mel_tokens})"
                         
                         # 2. 检查静音占比是否过高
-                        elif silence_ratio > 0.2 and silence_count > 10:  # 超过20%是静音
+                        elif silence_ratio > RETRY_THRESHOLD_FOR_WHOLE_SILENCE_RATIO and silence_count > RETRY_THRESHOLD_FOR_SILENCE_LENGTH:  # 超过20%是静音
                             should_retry = True
                             retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
                         
                         # 3. 检查末尾是否有超长静音段
                         elif silence_segments and silence_segments[-1][1] == len(codes_flat):
                             last_silence_ratio = silence_segments[-1][2] / codes_len
-                            if last_silence_ratio > 0.1 and silence_count > 10:  # 末尾静音超过10%
+                            if last_silence_ratio > RETRY_THRESHOLD_FOR_ENDING_SILENCE_RATIO and silence_count > RETRY_THRESHOLD_FOR_SILENCE_LENGTH:  # 末尾静音超过10%
                                 should_retry = True
                                 retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
                         
