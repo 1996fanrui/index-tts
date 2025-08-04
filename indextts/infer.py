@@ -25,6 +25,7 @@ from indextts.utils.front import TextNormalizer, TextTokenizer
 RETRY_THRESHOLD_FOR_WHOLE_SILENCE_RATIO=0.2
 RETRY_THRESHOLD_FOR_ENDING_SILENCE_RATIO=0.1
 RETRY_THRESHOLD_FOR_SILENCE_LENGTH=10
+MAX_RETRIES = 6  # 使用6次重试
 
 # Configuration for punctuation marks to remove from TTS input
 # These characters can cause unwanted pauses in speech synthesis
@@ -608,10 +609,9 @@ class IndexTTS:
                     print(codes)
                 # 添加重试机制处理早期截断
                 retry_count = 0
-                max_retries = 3  # 使用3次重试
                 all_attempts = []  # 保存所有尝试的结果
                 
-                while retry_count <= max_retries:
+                while retry_count <= MAX_RETRIES:
                     try:
                         # 计算当前codes的截断比例
                         if (codes == self.stop_mel_token).any():
@@ -695,7 +695,7 @@ class IndexTTS:
                                 should_retry = True
                                 retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
                         
-                        if should_retry and retry_count < max_retries:
+                        if should_retry and retry_count < MAX_RETRIES:
                             print(f"[WARNING] {retry_reason} - likely incomplete generation")
                             raise RuntimeError(f"{retry_reason}. This likely indicates incomplete generation.")
                         
@@ -716,10 +716,10 @@ class IndexTTS:
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
-                        if should_retry and retry_count < max_retries:
+                        if should_retry and retry_count < MAX_RETRIES:
                             retry_count += 1
-                            print(f"[RETRY {retry_count}/{max_retries}] Sentence {i}: {e}")
-                            print(f"[RETRY {retry_count}/{max_retries}] Regenerating with adjusted parameters...")
+                            print(f"[RETRY {retry_count}/{MAX_RETRIES}] Sentence {i}: {e}")
+                            print(f"[RETRY {retry_count}/{MAX_RETRIES}] Regenerating with adjusted parameters...")
                             
                             # 调整参数重新生成
                             adjusted_temperature = max(0.3, temperature * (0.8 - retry_count * 0.1))
@@ -1037,11 +1037,10 @@ class IndexTTS:
                 # remove ultra-long silence if exits
                 # temporarily fix the long silence bug.
                 # 添加重试机制处理早期截断
-                max_retries = 3
                 retry_count = 0
                 all_attempts = []  # 保存所有尝试的结果
                 
-                while retry_count <= max_retries:
+                while retry_count <= MAX_RETRIES:
                     try:
                         # 计算当前codes的截断比例
                         if (codes == self.stop_mel_token).any():
@@ -1125,7 +1124,7 @@ class IndexTTS:
                                 should_retry = True
                                 retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
                         
-                        if should_retry and retry_count < max_retries:
+                        if should_retry and retry_count < MAX_RETRIES:
                             print(f"[WARNING] {retry_reason} - likely incomplete generation")
                             raise RuntimeError(f"{retry_reason}. This likely indicates incomplete generation.")
                         
@@ -1146,10 +1145,10 @@ class IndexTTS:
                         break  # 成功（ratio >= 0.9），退出重试循环
                         
                     except RuntimeError as e:
-                        if should_retry and retry_count < max_retries:
+                        if should_retry and retry_count < MAX_RETRIES:
                             retry_count += 1
-                            print(f"[RETRY {retry_count}/{max_retries}] {e}")
-                            print(f"[RETRY {retry_count}/{max_retries}] Regenerating with adjusted parameters...")
+                            print(f"[RETRY {retry_count}/{MAX_RETRIES}] {e}")
+                            print(f"[RETRY {retry_count}/{MAX_RETRIES}] Regenerating with adjusted parameters...")
                             
                             # 调整参数重新生成
                             adjusted_temperature = max(0.3, temperature * (0.8 - retry_count * 0.1))
