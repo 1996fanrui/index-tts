@@ -376,7 +376,7 @@ class TextTokenizer:
             current_sentence.append(token)
             current_sentence_tokens_len += 1
             if current_sentence_tokens_len <= max_tokens_per_sentence:
-                if token in split_tokens and current_sentence_tokens_len > 2:
+                if token in split_tokens and current_sentence_tokens_len >= 2:
                     if i < len(tokenized_str) - 1:
                         if tokenized_str[i + 1] in ["'", "▁'"]:
                             # 后续token是'，则不切分
