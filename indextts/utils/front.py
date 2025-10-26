@@ -372,7 +372,7 @@ class TextTokenizer:
                     current_segment, ["-"], max_text_tokens_per_segment=max_text_tokens_per_segment, quick_streaming_tokens = quick_streaming_tokens
                 )
             elif current_segment_tokens_len <= max_text_tokens_per_segment:
-                if token in split_tokens and current_segment_tokens_len > 2:
+                if token in split_tokens and current_segment_tokens_len >= 2:
                     if i < len(tokenized_str) - 1:
                         if tokenized_str[i + 1] in ["'", "▁'"]:
                             # 后续token是'，则不切分
@@ -429,6 +429,7 @@ class TextTokenizer:
         # "▁!", # unk
         "▁?",
         "▁...", # ellipsis
+        "…",
     ]
     def split_segments(self, tokenized: List[str], max_text_tokens_per_segment=120, quick_streaming_tokens = 0) -> List[List[str]]:
         return TextTokenizer.split_segments_by_token(
