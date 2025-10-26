@@ -405,11 +405,13 @@ class TextTokenizer:
                         sub_sentences.append(current_sentence[j : j + max_tokens_per_sentence])
                     else:
                         sub_sentences.append(current_sentence[j:])
-                warnings.warn(
+                raise RuntimeError(
                     f"The tokens length of sentence exceeds limit: {max_tokens_per_sentence}, "
-                    f"Tokens in sentence: {current_sentence}."
-                    "Maybe unexpected behavior",
-                    RuntimeWarning,
+                    f"Tokens in sentence: {''.join(current_sentence[:50])}... (showing first 50 tokens). "
+                    f"Total length: {len(current_sentence)} tokens. "
+                    "Please consider: 1) Breaking the text into smaller sentences with punctuation, "
+                    "2) Increasing max_text_tokens_per_sentence parameter, "
+                    "or 3) Simplifying the sentence structure."
                 )
             sentences.extend(sub_sentences)
             current_sentence = []
