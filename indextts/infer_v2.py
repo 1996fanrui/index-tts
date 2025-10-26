@@ -306,6 +306,41 @@ class IndexTTS2:
         if self.gr_progress is not None:
             self.gr_progress(value, desc=desc)
 
+    def generate_srt(self, srt_path, sentences, all_latents, sampling_rate):
+        """
+        Generate SRT subtitle file based on sentence latents
+
+        Args:
+            srt_path: Path to save the SRT file
+            sentences: List of sentence strings
+            all_latents: List of latent tensors for each sentence
+            sampling_rate: Audio sampling rate (default 22050)
+        """
+        def format_time(seconds):
+            """Converts seconds to SRT time format HH:MM:SS,ms"""
+            hours, remainder = divmod(seconds, 3600)
+            minutes, remainder = divmod(remainder, 60)
+            seconds, milliseconds = divmod(remainder, 1)
+            return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02},{int(milliseconds*1000):03}"
+
+        total_duration_s = 0
+        with open(srt_path, 'w', encoding='utf-8') as srt_file:
+            for i, (sentence, latent) in enumerate(zip(sentences, all_latents), 1):
+                # The duration of a latent is its length * mel_length_compression / sampling_rate
+                duration_s = latent.shape[1] * self.gpt.mel_length_compression / sampling_rate
+
+                start_time = total_duration_s
+                end_time = total_duration_s + duration_s
+
+                # sentence is already a string (original text)
+                sentence_text = sentence
+
+                srt_file.write(f"{i}\n")
+                srt_file.write(f"{format_time(start_time)} --> {format_time(end_time)}\n")
+                srt_file.write(f"{sentence_text.strip()}\n\n")
+
+                total_duration_s = end_time
+
     def _load_and_cut_audio(self,audio_path,max_audio_length_seconds,verbose=False,sr=None):
         if not sr:
             audio, sr = librosa.load(audio_path)
@@ -510,6 +545,8 @@ class IndexTTS2:
         sampling_rate = 22050
 
         wavs = []
+        all_latents = []  # for SRT generation
+        all_sentences = []  # for SRT generation
         gpt_gen_time = 0
         gpt_forward_time = 0
         s2mel_time = 0
@@ -613,6 +650,13 @@ class IndexTTS2:
                     )
                     gpt_forward_time += time.perf_counter() - m_start_time
 
+                    # Collect latent and sentence for SRT generation
+                    all_latents.append(latent)
+                    # Convert tokens back to text for SRT
+                    # sent is a list of token strings, join them together
+                    sentence_text = "".join(sent).replace("▁", " ").strip()
+                    all_sentences.append(sentence_text)
+
                 dtype = None
                 with torch.amp.autocast(text_tokens.device.type, enabled=dtype is not None, dtype=dtype):
                     m_start_time = time.perf_counter()
@@ -678,6 +722,16 @@ class IndexTTS2:
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
             torchaudio.save(output_path, wav.type(torch.int16), sampling_rate)
             print(">> wav file saved to:", output_path)
+
+            # --- Begin SRT Generation ---
+            try:
+                srt_path = os.path.splitext(output_path)[0] + ".srt"
+                self.generate_srt(srt_path, all_sentences, all_latents, sampling_rate)
+                print(">> srt file saved to:", srt_path)
+            except Exception as e:
+                print(f">> Failed to generate SRT file: {e}")
+            # --- End SRT Generation ---
+
             if stream_return:
                 return None
             yield output_path
