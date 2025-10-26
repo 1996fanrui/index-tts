@@ -313,6 +313,10 @@ class TextTokenizer:
 
     def tokenize(self, text: str) -> List[str]:
         return self.encode(text, out_type=str)
+    
+    def tokenize_without_normalize(self, text: str) -> List[str]:
+        """Tokenize text without applying normalization, preserving original characters"""
+        return self.encode_without_normalize(text, out_type=str)
 
     def encode(self, text: str, **kwargs):
         if len(text) == 0:
@@ -322,6 +326,18 @@ class TextTokenizer:
         # 预处理
         if self.normalizer:
             text = self.normalizer.normalize(text)
+        if len(self.pre_tokenizers) > 0:
+            for pre_tokenizer in self.pre_tokenizers:
+                text = pre_tokenizer(text)
+        return self.sp_model.Encode(text, out_type=kwargs.pop("out_type", int), **kwargs)
+    
+    def encode_without_normalize(self, text: str, **kwargs):
+        """Encode text without normalization, only apply pre_tokenizers"""
+        if len(text) == 0:
+            return []
+        if len(text.strip()) == 1:
+            return self.sp_model.Encode(text, out_type=kwargs.pop("out_type", int), **kwargs)
+        # Only apply pre_tokenizers, skip normalization
         if len(self.pre_tokenizers) > 0:
             for pre_tokenizer in self.pre_tokenizers:
                 text = pre_tokenizer(text)
@@ -427,9 +443,26 @@ class TextTokenizer:
         "…",
         "▁...", # ellipsis
     ]
+    
+    # Additional punctuation marks for original text (Chinese punctuation)
+    original_punctuation_marks_tokens = [
+        "。",
+        "！", 
+        "？",
+        "▁。",
+        "▁！",
+        "▁？",
+        *punctuation_marks_tokens  # Include English punctuation as well
+    ]
     def split_sentences(self, tokenized: List[str], max_tokens_per_sentence=120) -> List[List[str]]:
         return TextTokenizer.split_sentences_by_token(
             tokenized, self.punctuation_marks_tokens, max_tokens_per_sentence=max_tokens_per_sentence
+        )
+    
+    def split_sentences_original(self, tokenized: List[str], max_tokens_per_sentence=120) -> List[List[str]]:
+        """Split sentences using original punctuation marks (including Chinese punctuation)"""
+        return TextTokenizer.split_sentences_by_token(
+            tokenized, self.original_punctuation_marks_tokens, max_tokens_per_sentence=max_tokens_per_sentence
         )
 
 
