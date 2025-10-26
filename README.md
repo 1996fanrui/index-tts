@@ -226,6 +226,47 @@ text="大家好，我现在正在bilibili 体验 ai 科技，说实话，来之�
 tts.infer(voice, text, output_path)
 ```
 
+### Updating/Upgrading after Code Changes
+
+If you have made changes to the code or pulled updates from the repository, you need to reinstall the package:
+
+```bash
+# Make sure you are in the project directory
+cd index-tts
+
+# Reinstall the package in editable mode
+pip install -e . --upgrade
+
+# If you have modified dependencies, you may need to force reinstall
+pip install -e . --upgrade --force-reinstall
+
+# If you encounter issues, you can uninstall first then reinstall
+pip uninstall indextts
+pip install -e .
+```
+
+使用了 editable 安装模式 是指 每次运行时 会运行 项目里的代码 吗？ 也就是不需要安装？
+
+⏺ 是的，你理解得很对！
+
+Editable 安装模式（pip install -e .）的工作原理是：
+
+1. 不复制代码：Python 包不会被复制到 site-packages 目录
+2. 创建链接：在 site-packages 中创建一个指向你项目目录的链接（.egg-link 文件）
+3. 直接运行源代码：每次运行时，Python 直接使用项目目录中的代码
+
+所以：
+- ✅ 代码修改立即生效：修改 .py 文件后，下次运行就会使用新代码
+- ✅ 无需重新安装：对于大部分代码改动，不需要重新运行 pip install
+- ❌ 但有例外：如果修改了 setup.py、包结构、或添加了新的依赖，才需要重新安装
+
+> [!NOTE]
+> Since the package is installed in editable mode (`-e`), most code changes will take effect immediately without reinstallation. However, you need to reinstall if you:
+> - Modified `setup.py` or `pyproject.toml`
+> - Changed package structure or added new modules
+> - Updated dependencies
+> - Want to ensure all changes are properly applied
+
 ## Acknowledge
 1. [tortoise-tts](https://github.com/neonbjb/tortoise-tts)
 2. [XTTSv2](https://github.com/coqui-ai/TTS)
