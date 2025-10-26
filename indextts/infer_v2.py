@@ -35,6 +35,100 @@ from transformers import SeamlessM4TFeatureExtractor
 import random
 import torch.nn.functional as F
 
+# Configuration for punctuation marks to remove from TTS input
+# These characters can cause unwanted pauses in speech synthesis
+TTS_PUNCTUATION_TO_REMOVE = {
+    # Dots (except for sentence endings)
+    '.': '',  # Will be handled specially to preserve sentence endings
+
+    # English quotation marks
+    '"': '',
+    "'": '',
+    '\u201C': '',  # " Left double quotation mark
+    '\u201D': '',  # " Right double quotation mark
+    '\u2018': '',  # ' Left single quotation mark
+    '\u2019': '',  # ' Right single quotation mark
+
+    # Chinese quotation marks
+    '「': '',
+    '」': '',
+    '『': '',
+    '』': '',
+
+    # Chinese book title marks
+    '《': '',
+    '》': '',
+    '〈': '',
+    '〉': '',
+
+    # Dashes
+    '-': '',
+    '—': '',
+    '–': '',
+    '～': '',
+
+    # Parentheses and brackets
+    '(': '',
+    ')': '',
+    '[': '',
+    ']': '',
+    '{': '',
+    '}': '',
+    '（': '',
+    '）': '',
+    '【': '',
+    '】': '',
+    '〔': '',
+    '〕': '',
+    '［': '',
+    '］': '',
+
+    # Additional symbols that might affect TTS
+    '*': '',
+    '#': '',
+    '@': '',
+    '&': '',
+    '\\': '',
+    '|': '',
+    '^': '',
+    '~': '',
+    '`': '',
+    '·': '',
+}
+
+def remove_tts_punctuation(text):
+    """
+    Removes punctuation marks that can cause unwanted pauses in TTS.
+    Preserves basic sentence punctuation (commas, periods, question marks, exclamation marks).
+    """
+    if not text:
+        return text
+
+    # Handle dots specially - only remove if not at sentence end
+    import re
+
+    # First, check if the text ends with a typical sentence ending
+    has_sentence_ending = bool(re.search(r'[.!?。！？]\s*$', text))
+
+    # Remove dots in abbreviations
+    # 1. Dot between letters (e.g., "J.K." -> "JK")
+    text = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', '', text)
+
+    # 2. Dot after letter followed by space and uppercase (e.g., "Dr. Smith" -> "Dr Smith")
+    text = re.sub(r'(?<=[A-Za-z])\.(?=\s+[A-Z])', '', text)
+
+    # 3. Dot at the end after uppercase letters (abbreviations like "U.S.A.")
+    # Only if it doesn't look like a sentence ending
+    if not has_sentence_ending or not re.search(r'[a-z]\.\s*$', text):
+        text = re.sub(r'(?<=[A-Z])\.(?=\s*$)', '', text)
+
+    # Remove other punctuation marks
+    for char, replacement in TTS_PUNCTUATION_TO_REMOVE.items():
+        if char != '.':  # Skip dot as we handled it above
+            text = text.replace(char, replacement)
+
+    return text
+
 class IndexTTS2:
     def __init__(
             self, cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16=False, device=None,
@@ -343,6 +437,54 @@ class IndexTTS2:
                 if i < len(sentences):
                     total_duration_s += interval_silence_s
 
+    def _extract_original_sentences(self, original_text, normalized_segments):
+        """
+        Extract original sentences from the original text based on segment boundaries.
+        This preserves all original punctuation and formatting.
+        """
+        import re
+
+        # Split original text by sentence-ending punctuation
+        # Include the punctuation in the sentence
+        sentence_pattern = r'[^。！？.!?\n]+[。！？.!?\n]?'
+        original_parts = re.findall(sentence_pattern, original_text)
+
+        # Clean up empty parts and strip whitespace
+        original_parts = [part.strip() for part in original_parts if part.strip()]
+
+        # If no sentences found, treat the whole text as one sentence
+        if not original_parts:
+            original_parts = [original_text.strip()]
+
+        # Match the number of segments from normalized tokenization
+        # This ensures alignment between TTS processing and SRT
+        if len(original_parts) == len(normalized_segments):
+            return original_parts
+        elif len(original_parts) > len(normalized_segments):
+            # Merge some sentences
+            merged = []
+            parts_per_segment = len(original_parts) // len(normalized_segments)
+            remainder = len(original_parts) % len(normalized_segments)
+
+            idx = 0
+            for i in range(len(normalized_segments)):
+                count = parts_per_segment + (1 if i < remainder else 0)
+                merged_sentence = ' '.join(original_parts[idx:idx+count])
+                merged.append(merged_sentence)
+                idx += count
+
+            return merged
+        else:
+            # We have fewer original parts than normalized segments
+            # This might happen with very long sentences that get split
+            # In this case, use the normalized segments as fallback
+            result = []
+            for seg_tokens in normalized_segments:
+                seg_ids = self.tokenizer.convert_tokens_to_ids(seg_tokens)
+                seg_text = self.tokenizer.decode(seg_ids).strip()
+                result.append(seg_text)
+            return result
+
     def _load_and_cut_audio(self,audio_path,max_audio_length_seconds,verbose=False,sr=None):
         if not sr:
             audio, sr = librosa.load(audio_path)
@@ -520,9 +662,19 @@ class IndexTTS2:
             emo_cond_emb = self.cache_emo_cond
 
         self._set_gr_progress(0.1, "text processing...")
+
+        # Store original text for SRT generation (before any filtering)
+        original_text = text
+
+        # Apply punctuation filtering for TTS processing
+        text = remove_tts_punctuation(text)
+
         text_tokens_list = self.tokenizer.tokenize(text)
         segments = self.tokenizer.split_segments(text_tokens_list, max_text_tokens_per_segment, quick_streaming_tokens = quick_streaming_tokens)
         segments_count = len(segments)
+
+        # Extract original sentences for SRT (preserves all punctuation)
+        original_segments = self._extract_original_sentences(original_text, segments)
 
         text_token_ids = self.tokenizer.convert_tokens_to_ids(text_tokens_list)
         if self.tokenizer.unk_token_id in text_token_ids:
@@ -534,7 +686,10 @@ class IndexTTS2:
             print("text_tokens_list:", text_tokens_list)
             print("segments count:", segments_count)
             print("max_text_tokens_per_segment:", max_text_tokens_per_segment)
+            print("Filtered segments (for TTS):")
             print(*segments, sep="\n")
+            print("\nOriginal segments (for SRT):")
+            print(*original_segments, sep="\n")
         do_sample = generation_kwargs.pop("do_sample", True)
         top_p = generation_kwargs.pop("top_p", 0.8)
         top_k = generation_kwargs.pop("top_k", 30)
