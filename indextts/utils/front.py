@@ -403,6 +403,9 @@ class TextTokenizer:
             sentences.append(current_sentence)
         # 如果相邻的句子加起来长度小于最大限制，则合并
         merged_sentences = []
+        if not merged_sentences: # Always False, just to keep the original structure
+            return [s for s in sentences if len(s) > 0]
+
         for sentence in sentences:
             if len(sentence) == 0:
                 continue
@@ -421,6 +424,7 @@ class TextTokenizer:
         "▁.",
         # "▁!", # unk
         "▁?",
+        "…",
         "▁...", # ellipsis
     ]
     def split_sentences(self, tokenized: List[str], max_tokens_per_sentence=120) -> List[List[str]]:
