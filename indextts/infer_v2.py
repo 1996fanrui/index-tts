@@ -35,6 +35,12 @@ from transformers import SeamlessM4TFeatureExtractor
 import random
 import torch.nn.functional as F
 
+# Retry mechanism constants
+RETRY_THRESHOLD_FOR_WHOLE_SILENCE_RATIO = 0.2  # 整体静音占比阈值
+RETRY_THRESHOLD_FOR_ENDING_SILENCE_RATIO = 0.1  # 末尾静音占比阈值
+RETRY_THRESHOLD_FOR_SILENCE_LENGTH = 10  # 静音长度阈值
+MAX_RETRIES = 6  # 最大重试次数
+
 class IndexTTS2:
     def __init__(
             self, cfg_path="checkpoints/config.yaml", model_dir="checkpoints", use_fp16=False, device=None,
@@ -224,7 +230,20 @@ class IndexTTS2:
                 len_ = code.size(0)
             else:
                 stop_mel_idx = (code == self.stop_mel_token).nonzero(as_tuple=False)
-                len_ = stop_mel_idx[0].item() if len(stop_mel_idx) > 0 else code.size(0)
+                first_stop_position = stop_mel_idx[0].item() if len(stop_mel_idx) > 0 else code.size(0)
+
+                # 计算截断位置的百分比
+                truncation_ratio = first_stop_position / code.size(0)
+
+                # 检查stop_mel_token是否过早出现
+                if truncation_ratio < 0.9:  # 如果在前90%就出现
+                    # 抛出异常，让上层处理重试
+                    raise RuntimeError(f"Early stop_mel_token detected at {truncation_ratio*100:.1f}% (position {first_stop_position}/{code.size(0)}). This likely indicates truncated speech generation.")
+                elif truncation_ratio < 0.95:
+                    # 可疑位置，打印警告
+                    print(f"[WARNING] stop_mel_token at {truncation_ratio*100:.1f}% - might be early termination")
+
+                len_ = first_stop_position
 
             count = torch.sum(code == silent_token).item()
             if count > max_consecutive:
@@ -569,49 +588,186 @@ class IndexTTS2:
                 print("text_token_syms is same as segment tokens", text_token_syms == sent)
 
             m_start_time = time.perf_counter()
+
+            # 添加重试机制处理早期截断
+            retry_count = 0
+            all_attempts = []  # 保存所有尝试的结果
+
+            while retry_count <= MAX_RETRIES:
+                try:
+                    with torch.no_grad():
+                        with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
+                            emovec = self.gpt.merge_emovec(
+                                spk_cond_emb,
+                                emo_cond_emb,
+                                torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                                torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                                alpha=emo_alpha
+                            )
+
+                            if emo_vector is not None:
+                                emovec = emovec_mat + (1 - torch.sum(weight_vector)) * emovec
+                                # emovec = emovec_mat
+
+                            # 根据重试次数调整参数
+                            adjusted_temperature = max(0.3, temperature * (0.8 - retry_count * 0.1)) if retry_count > 0 else temperature
+                            adjusted_repetition_penalty = min(30.0, repetition_penalty * (1.3 + retry_count * 0.2)) if retry_count > 0 else repetition_penalty
+
+                            codes, speech_conditioning_latent = self.gpt.inference_speech(
+                                spk_cond_emb,
+                                text_tokens,
+                                emo_cond_emb,
+                                cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
+                                emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
+                                emo_vec=emovec,
+                                do_sample=True,
+                                top_p=top_p,
+                                top_k=top_k,
+                                temperature=adjusted_temperature,
+                                num_return_sequences=autoregressive_batch_size,
+                                length_penalty=length_penalty,
+                                num_beams=num_beams,
+                                repetition_penalty=adjusted_repetition_penalty,
+                                max_generate_length=max_mel_tokens,
+                                **generation_kwargs
+                            )
+
+                    # 计算当前codes的截断比例
+                    if (codes == self.stop_mel_token).any():
+                        stop_mel_idx = (codes == self.stop_mel_token).nonzero(as_tuple=False)
+                        first_stop_position = stop_mel_idx[0, -1].item() if len(stop_mel_idx) > 0 else codes.size(-1)
+                        current_ratio = first_stop_position / codes.size(-1)
+                    else:
+                        current_ratio = 1.0
+                        first_stop_position = codes.size(-1)
+
+                    # 保存当前尝试
+                    all_attempts.append({
+                        'codes': codes.clone(),
+                        'speech_conditioning_latent': speech_conditioning_latent,
+                        'ratio': current_ratio,
+                        'retry': retry_count
+                    })
+
+                    # 打印当前尝试的截断占比
+                    position_info = f"{first_stop_position}" if current_ratio < 1.0 else "full"
+                    print(f"[ATTEMPT {retry_count}] Segment {seg_idx}: Truncation ratio {current_ratio*100:.1f}% (position {position_info}/{codes.size(-1)})")
+
+                    # 添加调试日志
+                    codes_len = codes.shape[-1] if codes.dim() > 1 else codes.shape[0]
+                    print(f"[DEBUG] codes shape: {codes.shape}, codes_len={codes_len}, max_mel_tokens={max_mel_tokens}")
+                    print(f"[DEBUG] codes[-1]={codes.flatten()[-1].item() if codes_len > 0 else 'empty'}, stop_mel_token={self.stop_mel_token}")
+                    print(f"[DEBUG] Has stop token: {(codes == self.stop_mel_token).any().item()}")
+
+                    # 统计静音token的数量和连续静音段
+                    silence_count = (codes == 52).sum().item()
+                    silence_ratio = silence_count / codes_len if codes_len > 0 else 0
+                    print(f"[DEBUG] Silence tokens: {silence_count}/{codes_len} ({silence_ratio*100:.1f}%)")
+
+                    # 分析连续静音段
+                    codes_flat = codes.flatten()
+                    silence_segments = []
+                    current_silence_start = None
+
+                    for i in range(len(codes_flat)):
+                        if codes_flat[i] == 52:  # 静音token
+                            if current_silence_start is None:
+                                current_silence_start = i
+                        else:
+                            if current_silence_start is not None:
+                                silence_length = i - current_silence_start
+                                if silence_length >= 10:  # 只记录超过10个token的静音段
+                                    silence_segments.append((current_silence_start, i, silence_length))
+                                current_silence_start = None
+
+                    # 处理结尾的静音段
+                    if current_silence_start is not None:
+                        silence_length = len(codes_flat) - current_silence_start
+                        if silence_length >= 10:
+                            silence_segments.append((current_silence_start, len(codes_flat), silence_length))
+
+                    if silence_segments:
+                        print(f"[DEBUG] Found {len(silence_segments)} long silence segments:")
+                        for start, end, length in silence_segments[:3]:  # 只显示前3个
+                            print(f"  - Position {start}-{end}: {length} tokens ({length/codes_len*100:.1f}% of total)")
+
+                    # 检查异常情况
+                    should_retry = False
+                    retry_reason = ""
+
+                    # 1. 检查是否达到max_mel_tokens且无stop token
+                    if codes_len >= max_mel_tokens and (codes[:, -1] != self.stop_mel_token).any():
+                        should_retry = True
+                        retry_reason = f"Hit max_mel_tokens ({max_mel_tokens}) without stop token"
+                        if not has_warned:
+                            warnings.warn(
+                                f"WARN: generation stopped due to exceeding `max_mel_tokens` ({max_mel_tokens}). "
+                                f"Input text tokens: {text_tokens.shape[1]}. "
+                                f"Consider reducing `max_text_tokens_per_segment`({max_text_tokens_per_segment}) or increasing `max_mel_tokens`.",
+                                category=RuntimeWarning
+                            )
+                            has_warned = True
+
+                    # 2. 检查静音占比是否过高
+                    elif silence_ratio > RETRY_THRESHOLD_FOR_WHOLE_SILENCE_RATIO and silence_count > RETRY_THRESHOLD_FOR_SILENCE_LENGTH:
+                        should_retry = True
+                        retry_reason = f"High silence ratio: {silence_ratio*100:.1f}%"
+
+                    # 3. 检查末尾是否有超长静音段
+                    elif silence_segments and silence_segments[-1][1] == len(codes_flat):
+                        last_silence_ratio = silence_segments[-1][2] / codes_len
+                        if last_silence_ratio > RETRY_THRESHOLD_FOR_ENDING_SILENCE_RATIO and silence_count > RETRY_THRESHOLD_FOR_SILENCE_LENGTH:
+                            should_retry = True
+                            retry_reason = f"Large silence at end: {last_silence_ratio*100:.1f}%"
+
+                    if should_retry and retry_count < MAX_RETRIES:
+                        print(f"[WARNING] {retry_reason} - likely incomplete generation")
+                        raise RuntimeError(f"{retry_reason}. This likely indicates incomplete generation.")
+
+                    # 分析token分布
+                    unique_tokens, counts = torch.unique(codes, return_counts=True)
+                    top_5_tokens = []
+                    if len(unique_tokens) > 0:
+                        sorted_indices = torch.argsort(counts, descending=True)[:5]
+                        for idx in sorted_indices:
+                            token = unique_tokens[idx].item()
+                            count = counts[idx].item()
+                            top_5_tokens.append(f"token_{token}:{count}")
+                    print(f"[DEBUG] Top 5 tokens: {', '.join(top_5_tokens)}")
+
+                    # 成功（ratio >= 0.9 或无需重试），退出重试循环
+                    break
+
+                except RuntimeError as e:
+                    if retry_count < MAX_RETRIES:
+                        retry_count += 1
+                        print(f"[RETRY {retry_count}/{MAX_RETRIES}] Segment {seg_idx}: {e}")
+                        print(f"[RETRY {retry_count}/{MAX_RETRIES}] Regenerating with adjusted parameters...")
+                        # 继续下一次循环，重新生成
+                    else:
+                        # 已达最大重试次数，从所有尝试中选择最佳结果
+                        if all_attempts:
+                            # 选择截断比例最高的结果
+                            best_attempt = max(all_attempts, key=lambda x: x['ratio'])
+
+                            # 检查最佳结果是否达到70%的阈值
+                            if best_attempt['ratio'] < 0.7:
+                                attempts_info = [(a['retry'], f"{a['ratio']*100:.1f}%") for a in all_attempts]
+                                print(f"[ERROR] Segment {seg_idx}: All {len(all_attempts)} attempts failed to reach 70% completion threshold")
+                                print(f"[ERROR] All attempts: {attempts_info}")
+                                print(f"[ERROR] Best attempt only reached {best_attempt['ratio']*100:.1f}% completion")
+                                raise RuntimeError(f"Failed to generate complete speech after {len(all_attempts)} attempts. Best completion ratio: {best_attempt['ratio']*100:.1f}%")
+
+                            codes = best_attempt['codes']
+                            speech_conditioning_latent = best_attempt['speech_conditioning_latent']
+                            print(f"[BEST RESULT] Segment {seg_idx}: Selected attempt {best_attempt['retry']} with {best_attempt['ratio']*100:.1f}% completion")
+                            attempts_info = [(a['retry'], f"{a['ratio']*100:.1f}%") for a in all_attempts]
+                            print(f"[BEST RESULT] All attempts: {attempts_info}")
+                        break
+
+            gpt_gen_time += time.perf_counter() - m_start_time
+
             with torch.no_grad():
-                with torch.amp.autocast(text_tokens.device.type, enabled=self.dtype is not None, dtype=self.dtype):
-                    emovec = self.gpt.merge_emovec(
-                        spk_cond_emb,
-                        emo_cond_emb,
-                        torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                        torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                        alpha=emo_alpha
-                    )
-
-                    if emo_vector is not None:
-                        emovec = emovec_mat + (1 - torch.sum(weight_vector)) * emovec
-                        # emovec = emovec_mat
-
-                    codes, speech_conditioning_latent = self.gpt.inference_speech(
-                        spk_cond_emb,
-                        text_tokens,
-                        emo_cond_emb,
-                        cond_lengths=torch.tensor([spk_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_cond_lengths=torch.tensor([emo_cond_emb.shape[-1]], device=text_tokens.device),
-                        emo_vec=emovec,
-                        do_sample=True,
-                        top_p=top_p,
-                        top_k=top_k,
-                        temperature=temperature,
-                        num_return_sequences=autoregressive_batch_size,
-                        length_penalty=length_penalty,
-                        num_beams=num_beams,
-                        repetition_penalty=repetition_penalty,
-                        max_generate_length=max_mel_tokens,
-                        **generation_kwargs
-                    )
-
-                gpt_gen_time += time.perf_counter() - m_start_time
-                if not has_warned and (codes[:, -1] != self.stop_mel_token).any():
-                    warnings.warn(
-                        f"WARN: generation stopped due to exceeding `max_mel_tokens` ({max_mel_tokens}). "
-                        f"Input text tokens: {text_tokens.shape[1]}. "
-                        f"Consider reducing `max_text_tokens_per_segment`({max_text_tokens_per_segment}) or increasing `max_mel_tokens`.",
-                        category=RuntimeWarning
-                    )
-                    has_warned = True
-
                 code_lens = torch.tensor([codes.shape[-1]], device=codes.device, dtype=codes.dtype)
                 #                 if verbose:
                 #                     print(codes, type(codes))
