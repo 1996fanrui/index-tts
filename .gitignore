@@ -29,3 +29,4 @@ desktop.ini
 /checkpoints/*
 !/checkpoints/*.yaml
 /outputs/
+examples/checkpoints/hf_cache/
