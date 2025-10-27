@@ -361,17 +361,9 @@ class TextTokenizer:
             token = tokenized_str[i]
             current_segment.append(token)
             current_segment_tokens_len += 1
-            if not  ("," in split_tokens or "▁," in split_tokens ) and ("," in current_segment or "▁," in current_segment): 
-                # 如果当前tokens中有,，则按,分割
-                sub_segments = TextTokenizer.split_segments_by_token(
-                    current_segment, [",", "▁,"], max_text_tokens_per_segment=max_text_tokens_per_segment, quick_streaming_tokens = quick_streaming_tokens
-                )
-            elif "-" not in split_tokens and "-" in current_segment:
-                # 没有,，则按-分割
-                sub_segments = TextTokenizer.split_segments_by_token(
-                    current_segment, ["-"], max_text_tokens_per_segment=max_text_tokens_per_segment, quick_streaming_tokens = quick_streaming_tokens
-                )
-            elif current_segment_tokens_len <= max_text_tokens_per_segment:
+
+            # ✅ 正确：先检查主要标点
+            if current_segment_tokens_len <= max_text_tokens_per_segment:
                 if token in split_tokens and current_segment_tokens_len >= 2:
                     if i < len(tokenized_str) - 1:
                         if tokenized_str[i + 1] in ["'", "▁'"]:
@@ -382,7 +374,18 @@ class TextTokenizer:
                     current_segment = []
                     current_segment_tokens_len = 0
                 continue
-            # 如果当前tokens的长度超过最大限制
+
+            # ✅ 正确：只有超长时才用逗号兜底
+            if not ("," in split_tokens or "▁," in split_tokens) and ("," in current_segment or "▁," in current_segment):
+                # 如果当前tokens中有,，则按,分割
+                sub_segments = TextTokenizer.split_segments_by_token(
+                    current_segment, [",", "▁,"], max_text_tokens_per_segment=max_text_tokens_per_segment, quick_streaming_tokens = quick_streaming_tokens
+                )
+            elif "-" not in split_tokens and "-" in current_segment:
+                # 没有,，则按-分割
+                sub_segments = TextTokenizer.split_segments_by_token(
+                    current_segment, ["-"], max_text_tokens_per_segment=max_text_tokens_per_segment, quick_streaming_tokens = quick_streaming_tokens
+                )
             else:
                 # 按照长度分割
                 sub_segments = []
