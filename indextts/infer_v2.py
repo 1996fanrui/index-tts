@@ -703,7 +703,6 @@ class IndexTTS2:
 
         wavs = []
         wav_durations = []  # for SRT generation: actual wav durations in seconds
-        all_sentences = []  # for SRT generation
         gpt_gen_time = 0
         gpt_forward_time = 0
         s2mel_time = 0
@@ -807,11 +806,6 @@ class IndexTTS2:
                     )
                     gpt_forward_time += time.perf_counter() - m_start_time
 
-                    # Convert tokens back to text for SRT
-                    # sent is a list of token strings, join them together
-                    sentence_text = "".join(sent).replace("▁", " ").strip()
-                    all_sentences.append(sentence_text)
-
                 dtype = None
                 with torch.amp.autocast(text_tokens.device.type, enabled=dtype is not None, dtype=dtype):
                     m_start_time = time.perf_counter()
@@ -886,7 +880,7 @@ class IndexTTS2:
             # --- Begin SRT Generation ---
             try:
                 srt_path = os.path.splitext(output_path)[0] + ".srt"
-                self.generate_srt(srt_path, all_sentences, wav_durations, sampling_rate, interval_silence)
+                self.generate_srt(srt_path, original_segments, wav_durations, sampling_rate, interval_silence)
                 print(">> srt file saved to:", srt_path)
             except Exception as e:
                 print(f">> Failed to generate SRT file: {e}")
