@@ -403,8 +403,11 @@ class TextTokenizer:
         if current_segment_tokens_len > 0:
             assert current_segment_tokens_len <= max_text_tokens_per_segment
             segments.append(current_segment)
-        # 如果相邻的句子加起来长度小于最大限制，且此前token总数超过quick_streaming_tokens，则合并
+        # 禁用句子合并逻辑，保持原始分句结构
         merged_segments = []
+        if not merged_segments: # Always True, skip merging to keep original segments
+            return [s for s in segments if len(s) > 0]
+
         total_token = 0
         for segment in segments:
             total_token += len(segment)
