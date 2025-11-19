@@ -71,6 +71,14 @@ class TextNormalizer:
     例如：克里斯托弗·诺兰，约瑟夫·高登-莱维特
     """
 
+    TECH_TERM_PATTERN = r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+"
+    """
+    匹配技术术语，格式：字母开头+(字母或数字)*+(-字母或数字)+
+    例如：GPT-5-nano, F5-TTS, Fish-Speech, GPT-5, CosyVoice-2
+    必须以字母开头，避免匹配纯数字（如电话号码 135-4567-8900）
+    用于保护连字符结构，防止中文normalizer将连字符解析为减号（如"负五减"）
+    """
+
     # 匹配常见英语缩写 's，仅用于替换为 is，不匹配所有 's
     ENGLISH_CONTRACTION_PATTERN = r"(what|where|who|which|how|t?here|it|s?he|that|this)'s"
 
@@ -116,8 +124,10 @@ class TextNormalizer:
             return ""
         if self.use_chinese(text):
             text = re.sub(TextNormalizer.ENGLISH_CONTRACTION_PATTERN, r"\1 is", text, flags=re.IGNORECASE)
-            replaced_text, pinyin_list = self.save_pinyin_tones(text.rstrip())
-            
+            # 保护技术术语（如 GPT-5-nano）避免被中文normalizer错误处理
+            replaced_text, tech_list = self.save_tech_terms(text.rstrip())
+            replaced_text, pinyin_list = self.save_pinyin_tones(replaced_text)
+
             replaced_text, original_name_list = self.save_names(replaced_text)
             try:
                 result = self.zh_normalizer.normalize(replaced_text)
@@ -128,12 +138,18 @@ class TextNormalizer:
             result = self.restore_names(result, original_name_list)
             # 恢复拼音声调
             result = self.restore_pinyin_tones(result, pinyin_list)
+            # 恢复技术术语
+            result = self.restore_tech_terms(result, tech_list)
             pattern = re.compile("|".join(re.escape(p) for p in self.zh_char_rep_map.keys()))
             result = pattern.sub(lambda x: self.zh_char_rep_map[x.group()], result)
         else:
             try:
                 text = re.sub(TextNormalizer.ENGLISH_CONTRACTION_PATTERN, r"\1 is", text, flags=re.IGNORECASE)
-                result = self.en_normalizer.normalize(text)
+                # 保护技术术语（如 GPT-5-Nano）避免被英文normalizer错误处理
+                replaced_text, tech_list = self.save_tech_terms(text)
+                result = self.en_normalizer.normalize(replaced_text)
+                # 恢复技术术语
+                result = self.restore_tech_terms(result, tech_list)
             except Exception:
                 result = text
                 print(traceback.format_exc())
@@ -186,6 +202,44 @@ class TextNormalizer:
         for i, name in enumerate(original_name_list):
             number = chr(ord("a") + i)
             transformed_text = transformed_text.replace(f"<n_{number}>", name)
+        return transformed_text
+
+    def save_tech_terms(self, original_text):
+        """
+        保护技术术语中的连字符，防止被中文normalizer解析为减号
+        策略：将术语中的连字符替换为特殊占位符<H>，数字仍可被正常处理
+        例如：GPT-5-nano -> GPT<H>5<H>nano，然后 5 被转换为 五
+        最终恢复为：GPT-五-nano
+        """
+        tech_pattern = re.compile(TextNormalizer.TECH_TERM_PATTERN)
+        original_tech_list = tech_pattern.findall(original_text)
+        if len(original_tech_list) == 0:
+            return (original_text, None)
+
+        # 去重并按长度降序排列（避免短匹配先替换导致问题）
+        original_tech_list = sorted(set(original_tech_list), key=len, reverse=True)
+        transformed_text = original_text
+
+        # 将术语中的连字符替换为占位符 <H>
+        for term in original_tech_list:
+            # 将 GPT-5-nano 替换为 GPT<H>5<H>nano
+            protected_term = term.replace("-", "<H>")
+            transformed_text = transformed_text.replace(term, protected_term)
+
+        return transformed_text, original_tech_list
+
+    def restore_tech_terms(self, normalized_text, original_tech_list):
+        """
+        恢复技术术语中的连字符
+        将占位符 <H> 恢复为连字符 -
+        同时清理 normalizer 可能在占位符周围添加的多余空格
+        """
+        if not original_tech_list or len(original_tech_list) == 0:
+            return normalized_text
+
+        # 清理 <H> 周围可能的空格，然后恢复为连字符
+        # 处理模式: " <H> " -> "-", " <H>" -> "-", "<H> " -> "-", "<H>" -> "-"
+        transformed_text = re.sub(r'\s*<H>\s*', '-', normalized_text)
         return transformed_text
 
     def save_pinyin_tones(self, original_text):
@@ -481,12 +535,16 @@ if __name__ == "__main__":
         "babala2是什么？",  # babala二是什么?
         "用beta1测试",  # 用beta一测试
         "have you ever been to beta2?",  # have you ever been to beta two?
-        "such as XTTS, CosyVoice2, Fish-Speech, and F5-TTS",  # such as xtts,cosyvoice two,fish-speech,and f five-tts
         "where's the money?",  # where is the money?
         "who's there?",  # who is there?
         "which's the best?",  # which is the best?
         "how's it going?",  # how is it going?
         "今天是个好日子 it's a good day",  # 今天是个好日子 it is a good day
+        # 术语
+        "such as XTTS, CosyVoice2, Fish-Speech, and F5-TTS",  # such as xtts,cosyvoice two,fish-speech,and f five-tts
+        "GPT-5-Nano is the smallest and fastest variant in the GPT-5 model family.",
+        "GPT-5-Nano 是 GPT-5 模型家族中最小且速度最快的变体",
+        "2025/09/08 IndexTTS-2 全球发布"
         # 人名
         "约瑟夫·高登-莱维特（Joseph Gordon-Levitt is an American actor）",
         "蒂莫西·唐纳德·库克（英文名：Timothy Donald Cook），通称蒂姆·库克（Tim Cook），美国商业经理、工业工程师和工业开发商，现任苹果公司首席执行官。",
