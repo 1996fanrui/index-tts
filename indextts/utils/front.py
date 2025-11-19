@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from functools import lru_cache
 import os
 import traceback
 import re
@@ -9,7 +10,7 @@ from sentencepiece import SentencePieceProcessor
 
 
 class TextNormalizer:
-    def __init__(self):
+    def __init__(self, enable_glossary=False):
         self.zh_normalizer = None
         self.en_normalizer = None
         self.char_rep_map = {
@@ -52,6 +53,18 @@ class TextNormalizer:
         self.zh_char_rep_map = {
             "$": ".",
             **self.char_rep_map,
+        }
+        self.enable_glossary = enable_glossary
+        # 术语词汇表：用户可自定义专业术语的读法
+        # 格式: {"原始术语": {"en": "英文读法", "zh": "中文读法"}}
+        self.term_glossary = {
+            # "M.2": {"en": "M dot two", "zh": "M 二"},
+            # "PCIe 5.0": {"en": "PCIE five", "zh": "PCIE 五点零"},
+            # "PCIe 4.0": {"en": "PCIE four", "zh": "PCIE 四点零"},
+            # "AHCI": "A H C I",
+            # "TTS": "T T S",
+            # "Inc.": {"en": "Ink"},
+            # ".md": {"en": "dot M D", "zh": "点 M D"},
         }
 
     def match_email(self, email):
@@ -124,6 +137,9 @@ class TextNormalizer:
             return ""
         if self.use_chinese(text):
             text = re.sub(TextNormalizer.ENGLISH_CONTRACTION_PATTERN, r"\1 is", text, flags=re.IGNORECASE)
+            # 应用术语词汇表（优先级最高，在所有保护之前）
+            if self.enable_glossary:
+                text = self.apply_glossary_terms(text, lang="zh")
             # 保护技术术语（如 GPT-5-nano）避免被中文normalizer错误处理
             replaced_text, tech_list = self.save_tech_terms(text.rstrip())
             replaced_text, pinyin_list = self.save_pinyin_tones(replaced_text)
@@ -145,6 +161,9 @@ class TextNormalizer:
         else:
             try:
                 text = re.sub(TextNormalizer.ENGLISH_CONTRACTION_PATTERN, r"\1 is", text, flags=re.IGNORECASE)
+                # 应用术语词汇表（优先级最高，在所有保护之前）
+                if self.enable_glossary:
+                    text = self.apply_glossary_terms(text, lang="en")
                 # 保护技术术语（如 GPT-5-Nano）避免被英文normalizer错误处理
                 replaced_text, tech_list = self.save_tech_terms(text)
                 result = self.en_normalizer.normalize(replaced_text)
@@ -241,6 +260,95 @@ class TextNormalizer:
         # 处理模式: " <H> " -> "-", " <H>" -> "-", "<H> " -> "-", "<H>" -> "-"
         transformed_text = re.sub(r'\s*<H>\s*', '-', normalized_text)
         return transformed_text
+
+    def apply_glossary_terms(self, text, lang="zh"):
+        """
+        应用术语词汇表，将专业术语替换为对应语言的读法
+
+        Args:
+            text: 待处理文本
+            lang: 语言类型 "zh" 或 "en"
+
+        Returns:
+            处理后的文本
+
+        Example:
+            "M.2 NVMe SSD" -> (zh) "M 二 NVMe SSD"
+            "M.2 NVMe SSD" -> (en) "M dot two NVMe SSD"
+        """
+        if not self.term_glossary:
+            return text
+
+        # 按术语长度降序排列，避免短术语先匹配导致长术语无法匹配
+        # 例如："PCIe 5.0" 应该在 "PCIe" 之前匹配
+        sorted_terms = sorted(self.term_glossary.keys(), key=len, reverse=True)
+        @lru_cache(maxsize=42)
+        def get_term_pattern(term: str):
+            return re.compile(re.escape(term), re.IGNORECASE)
+        transformed_text = text
+        for term in sorted_terms:
+            term_value = self.term_glossary[term]
+            if isinstance(term_value, dict):
+                replacement = term_value.get(lang, term_value.get(lang, term))
+            else:
+                replacement = term_value
+            # 使用正则进行大小写不敏感的替换
+            pattern = get_term_pattern(term)
+            transformed_text = pattern.sub(replacement, transformed_text)
+
+        return transformed_text
+
+    def load_glossary(self, glossary_dict):
+        """
+        加载外部术语词汇表
+
+        Args:
+            glossary_dict: 术语词典，格式为 {"术语": {"en": "英文读法", "zh": "中文读法"}}
+
+        Example:
+            normalizer.load_glossary({
+                "M.2": {"en": "M dot two", "zh": "M 二"},
+                "PCIe": {"en": "PCIE", "zh": "PCIE"}
+            })
+        """
+        if glossary_dict and isinstance(glossary_dict, dict):
+            self.term_glossary.update(glossary_dict)
+
+    def load_glossary_from_yaml(self, glossary_path):
+        """
+        从 YAML 文件加载术语词汇表
+
+        Args:
+            glossary_path: YAML 文件路径
+
+        Example:
+            normalizer.load_glossary_from_yaml("checkpoints/glossary.yaml")
+
+        YAML 文件格式:
+            M.2:
+              en: M dot two
+              zh: M 二
+            NVMe: N-V-M-E  # 中英文相同读法
+        """
+        if glossary_path and os.path.exists(glossary_path):
+            import yaml
+            with open(glossary_path, 'r', encoding='utf-8') as f:
+                external_glossary = yaml.safe_load(f)
+                if external_glossary and isinstance(external_glossary, dict):
+                    self.term_glossary.update(external_glossary)
+                    return True
+        return False
+
+    def save_glossary_to_yaml(self, glossary_path):
+        """
+        保存术语词汇表到 YAML 文件
+
+        Args:
+            glossary_path: YAML 文件路径
+        """
+        import yaml
+        with open(glossary_path, 'w', encoding='utf-8') as f:
+            yaml.dump(self.term_glossary, f, allow_unicode=True, default_flow_style=False)
 
     def save_pinyin_tones(self, original_text):
         """
@@ -500,7 +608,7 @@ class TextTokenizer:
 if __name__ == "__main__":
     # 测试程序
 
-    text_normalizer = TextNormalizer()
+    text_normalizer = TextNormalizer(enable_glossary=True)
 
     cases = [
         "IndexTTS 正式发布1.0版本了，效果666",
@@ -542,9 +650,11 @@ if __name__ == "__main__":
         "今天是个好日子 it's a good day",  # 今天是个好日子 it is a good day
         # 术语
         "such as XTTS, CosyVoice2, Fish-Speech, and F5-TTS",  # such as xtts,cosyvoice two,fish-speech,and f five-tts
-        "GPT-5-Nano is the smallest and fastest variant in the GPT-5 model family.",
-        "GPT-5-Nano 是 GPT-5 模型家族中最小且速度最快的变体",
-        "2025/09/08 IndexTTS-2 全球发布"
+        "GPT-5-Nano is the smallest and fastest variant in the GPT-5 model family.",  # GPT-five-Nano is the smallest and fastest variant in the GPT-five model family
+        "GPT-5-Nano 是 GPT-5 模型家族中最小且速度最快的变体",  # GPT-五-Nano 是 GPT-五 系统中最小且速度最快的变体
+        "2025/09/08 IndexTTS-2 全球发布",  # 二零二五年九月八日 IndexTTS-二全球发布
+        "Here are some highly-rated M.2 NVMe SSDs: Samsung 9100 PRO PCIe 5.0 SSD M.2, $139.99",  # Here are some highly-rated M dot two NVMe SSD's, Samsung nine thousand one hundred PRO PCIE five SSD M dot two . one hundred and thirty nine dollars and ninety nine cents
+        "we dive deep into the showdown between DisplayPort 1.4 and HDMI 2.1 to determine which is the best choice for gaming enthusiasts",
         # 人名
         "约瑟夫·高登-莱维特（Joseph Gordon-Levitt is an American actor）",
         "蒂莫西·唐纳德·库克（英文名：Timothy Donald Cook），通称蒂姆·库克（Tim Cook），美国商业经理、工业工程师和工业开发商，现任苹果公司首席执行官。",
