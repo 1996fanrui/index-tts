@@ -395,9 +395,9 @@ with gr.Blocks(title="IndexTTS Demo") as demo:
     # 术语词汇表事件处理函数
     def on_add_glossary_term(term, reading_zh, reading_en):
         """添加术语到词汇表并自动保存"""
-        term = term.strip()
-        reading_zh = reading_zh.strip()
-        reading_en = reading_en.strip()
+        term = term.rstrip()
+        reading_zh = reading_zh.rstrip()
+        reading_en = reading_en.rstrip()
 
         if not term:
             gr.Warning(i18n("请输入术语"))
