@@ -211,7 +211,7 @@ with gr.Blocks(title="IndexTTS Demo") as demo:
             output_audio = gr.Audio(label=i18n("生成结果"), visible=True,key="output_audio")
 
         with gr.Row():
-        experimental_checkbox = gr.Checkbox(label=i18n("显示实验功能"), value=False)
+            experimental_checkbox = gr.Checkbox(label=i18n("显示实验功能"), value=False)
             glossary_checkbox = gr.Checkbox(label=i18n("开启术语词汇读音"), value=tts.normalizer.enable_glossary)
         with gr.Accordion(i18n("功能设置")):
             # 情感控制选项部分
@@ -279,11 +279,11 @@ with gr.Blocks(title="IndexTTS Demo") as demo:
                         label=i18n("英文读法"),
                         placeholder="Index T-T-S two",
                     )
-                        btn_add_term = gr.Button(i18n("添加术语"), scale=1)
+                    btn_add_term = gr.Button(i18n("添加术语"), scale=1)
                 with gr.Column(scale=2):
                     glossary_table = gr.Markdown(
                         value=format_glossary_markdown()
-            )
+                    )
 
         with gr.Accordion(i18n("高级生成参数设置"), open=False, visible=True) as advanced_settings_group:
             with gr.Row():
@@ -396,15 +396,13 @@ with gr.Blocks(title="IndexTTS Demo") as demo:
     def on_add_glossary_term(term, reading_zh, reading_en):
         """添加术语到词汇表并自动保存"""
         if not term:
-            return (
-                gr.update(value=i18n("请输入术语")),
-                gr.update()
-            )
+            gr.Warning(i18n("请输入术语"))
+            return gr.update()
+            
         if not reading_zh and not reading_en:
-            return (
-                gr.update(value=i18n("请至少输入一种读法")),
-                gr.update()
-            )
+            gr.Warning(i18n("请至少输入一种读法"))
+            return gr.update()
+        
 
         # 构建读法数据
         if reading_zh and reading_en:
@@ -423,39 +421,8 @@ with gr.Blocks(title="IndexTTS Demo") as demo:
         tts.normalizer.save_glossary_to_yaml(tts.glossary_path)
 
         # 更新Markdown表格
-        return (
-            gr.update(value=f"{i18n('已添加')}: {term}"),
-            gr.update(value=format_glossary_markdown())
-        )
-
-    def on_delete_glossary_term(table_data):
-        """删除选中的术语（通过清空输入框中的术语来触发）"""
-        # 注意：Gradio Dataframe 的选择功能有限，这里我们通过术语输入框来指定要删除的术语
-        pass  # 实际删除功能需要结合具体的选择机制
-
-    def on_delete_by_term(term):
-        """通过术语名称删除"""
-        if not term:
-            return (
-                gr.update(value=i18n("请输入要删除的术语")),
-                gr.update()
-            )
-
-        if term in tts.normalizer.term_glossary:
-            del tts.normalizer.term_glossary[term]
-            # 自动保存
-            tts.normalizer.save_glossary_to_yaml(tts.glossary_path)
-
-            # 更新Markdown表格
-            return (
-                gr.update(value=f"{i18n('已删除')}: {term}"),
-                gr.update(value=format_glossary_markdown())
-            )
-        else:
-            return (
-                gr.update(value=f"{i18n('术语不存在')}: {term}"),
-                gr.update()
-            )
+        return gr.update(value=format_glossary_markdown())
+        
 
     def on_method_change(emo_control_method):
         if emo_control_method == 1:  # emotion reference audio
