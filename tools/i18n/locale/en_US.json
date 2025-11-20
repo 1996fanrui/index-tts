@@ -57,5 +57,9 @@
   "术语": "Term",
   "已删除": "Deleted",
   "英文读法": "English pronunciation",
-  "自定义术语词汇读音": "Customize term pronunciations"
+  "自定义术语词汇读音": "Customize term pronunciations",
+  "中文读法": "Chinese pronunciation",
+  "词汇表已更新": "Glossary updated successfully",
+  "保存词汇表时出错": "Error saving glossary",
+  "加载词汇表时出错": "Error loading glossary"
 }
