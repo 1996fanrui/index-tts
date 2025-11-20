@@ -395,6 +395,10 @@ with gr.Blocks(title="IndexTTS Demo") as demo:
     # 术语词汇表事件处理函数
     def on_add_glossary_term(term, reading_zh, reading_en):
         """添加术语到词汇表并自动保存"""
+        term = term.strip()
+        reading_zh = reading_zh.strip()
+        reading_en = reading_en.strip()
+
         if not term:
             gr.Warning(i18n("请输入术语"))
             return gr.update()
@@ -418,7 +422,13 @@ with gr.Blocks(title="IndexTTS Demo") as demo:
         tts.normalizer.term_glossary[term] = reading
 
         # 自动保存到文件
-        tts.normalizer.save_glossary_to_yaml(tts.glossary_path)
+        try:
+            tts.normalizer.save_glossary_to_yaml(tts.glossary_path)
+            gr.Info(i18n("词汇表已更新"), duration=1)
+        except Exception as e:
+            gr.Error(i18n("保存词汇表时出错"))
+            print(f"Error details: {e}")
+            return gr.update()
 
         # 更新Markdown表格
         return gr.update(value=format_glossary_markdown())
@@ -508,6 +518,15 @@ with gr.Blocks(title="IndexTTS Demo") as demo:
                          inputs=[],
                          outputs=[gen_button])
 
+    def on_demo_load():
+        """页面加载时重新加载glossary数据"""
+        try:
+            tts.normalizer.load_glossary_from_yaml(tts.glossary_path)
+        except Exception as e:
+            gr.Error(i18n("加载词汇表时出错"))
+            print(f"Failed to reload glossary on page load: {e}")
+        return gr.update(value=format_glossary_markdown())
+
     # 术语词汇表事件绑定
     btn_add_term.click(
         on_add_glossary_term,
@@ -515,6 +534,12 @@ with gr.Blocks(title="IndexTTS Demo") as demo:
         outputs=[glossary_table]
     )
 
+    # 页面加载时重新加载glossary
+    demo.load(
+        on_demo_load,
+        inputs=[],
+        outputs=[glossary_table]
+    )
 
     gen_button.click(gen_single,
                      inputs=[emo_control_method,prompt_audio, input_text_single, emo_upload, emo_weight,
