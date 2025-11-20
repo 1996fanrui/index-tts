@@ -57,15 +57,21 @@ class TextNormalizer:
         self.enable_glossary = enable_glossary
         # 术语词汇表：用户可自定义专业术语的读法
         # 格式: {"原始术语": {"en": "英文读法", "zh": "中文读法"}}
-        self.term_glossary = {
-            # "M.2": {"en": "M dot two", "zh": "M 二"},
-            # "PCIe 5.0": {"en": "PCIE five", "zh": "PCIE 五点零"},
-            # "PCIe 4.0": {"en": "PCIE four", "zh": "PCIE 四点零"},
-            # "AHCI": "A H C I",
-            # "TTS": "T T S",
-            # "Inc.": {"en": "Ink"},
-            # ".md": {"en": "dot M D", "zh": "点 M D"},
-        }
+        # "M.2": {"en": "M dot two", "zh": "M 二"},
+        # "PCIe 5.0": {"en": "PCIE five", "zh": "PCIE 五点零"},
+        # "PCIe 4.0": {"en": "PCIE four", "zh": "PCIE 四点零"},
+        # "AHCI": "A H C I",
+        # "TTS": "T T S",
+        # "Inc.": {"en": "Ink"},
+        # ".json": {"en": " dot Jay-Son", "zh": "点 Jay-Son"},
+        # "C++": {"en": "C plus plus", "zh": "C 加加"},
+        # "C#": "C sharp"
+        # self.term_glossary = {
+        #     "C++": {"en": "C plus plus", "zh": "C 加加"},
+        #     "C#": "C sharp",
+        #     "CMake": "C Make",
+        # }
+        self.term_glossary = dict()
 
     def match_email(self, email):
         # 正则表达式匹配邮箱格式：数字英文@数字英文.英文
@@ -335,7 +341,7 @@ class TextNormalizer:
             with open(glossary_path, 'r', encoding='utf-8') as f:
                 external_glossary = yaml.safe_load(f)
                 if external_glossary and isinstance(external_glossary, dict):
-                    self.term_glossary.update(external_glossary)
+                    self.term_glossary = external_glossary
                     return True
         return False
 
