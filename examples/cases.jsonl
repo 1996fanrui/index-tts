@@ -7,6 +7,5 @@
 {"prompt_audio":"voice_07.wav","emo_audio":"emo_sad.wav","emo_weight":0.65,"emo_mode":1,"text":"酒楼丧尽天良，开始借机竞拍房间，哎，一群蠢货。"}
 {"prompt_audio":"voice_08.wav","emo_audio":"emo_hate.wav","emo_weight":0.65,"emo_mode":1,"text":"你看看你，对我还有没有一点父子之间的信任了。"}
 {"prompt_audio":"voice_09.wav","emo_weight": 0.8,"emo_mode":2,"emo_vec_3":0.8,"text":"对不起嘛！我的记性真的不太好，但是和你在一起的事情，我都会努力记住的~"}
-{"prompt_audio":"voice_10.wav","emo_weight": 0.8,"emo_mode":2,"emo_vec_7":1.0,"text":"哇塞！这个爆率也太高了！欧皇附体了！"}
 {"prompt_audio":"voice_11.wav","emo_mode":3,"emo_text":"极度悲伤","text":"这些年的时光终究是错付了... "}
 {"prompt_audio":"voice_12.wav","emo_mode":3,"emo_text":"You scared me to death! What are you, a ghost?","text":"快躲起来！是他要来了！他要来抓我们了！"}
