@@ -71,6 +71,11 @@ webui = [
 deepspeed = [
   "deepspeed==0.17.1",
 ]
+# To install the HTTP service support, use `uv sync --extra http_service` (or `--all-extras`).
+http_service = [
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/index-tts/index-tts"
