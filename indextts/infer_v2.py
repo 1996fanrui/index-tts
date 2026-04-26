@@ -107,20 +107,33 @@ def remove_tts_punctuation(text):
     # Handle dots specially - only remove if not at sentence end
     import re
 
-    # First, check if the text ends with a typical sentence ending
-    has_sentence_ending = bool(re.search(r'[.!?。！？]\s*$', text))
-
-    # Remove dots in abbreviations
-    # 1. Dot between letters (e.g., "J.K." -> "JK")
-    text = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', '', text)
-
-    # 2. Dot after letter followed by space and uppercase (e.g., "Dr. Smith" -> "Dr Smith")
-    text = re.sub(r'(?<=[A-Za-z])\.(?=\s+[A-Z])', '', text)
-
-    # 3. Dot at the end after uppercase letters (abbreviations like "U.S.A.")
-    # Only if it doesn't look like a sentence ending
-    if not has_sentence_ending or not re.search(r'[a-z]\.\s*$', text):
-        text = re.sub(r'(?<=[A-Z])\.(?=\s*$)', '', text)
+    # NOTE: dot-handling rules below are temporarily disabled.
+    # Reason: rule 2 (`[A-Za-z]. + space + [A-Z]`) was meant to handle "Dr. Smith"
+    # style abbreviations, but it also matches normal sentence boundaries like
+    # "coffee. I drink ...", silently deleting the real period. Because the v2
+    # pipeline runs this filter on the FULL text BEFORE segmenting (unlike v1
+    # which segmented first and filtered per segment), the dropped period causes
+    # the tokenizer to merge two real sentences into one segment, leading to
+    # missing pauses in the audio and misaligned SRT subtitles.
+    # Our current scenario does not contain personal-name abbreviations, so we
+    # disable all dot rewriting and let every period reach the tokenizer as a
+    # sentence boundary. May restore (with a stricter rule, e.g. an explicit
+    # abbreviation whitelist) once the abbreviation case becomes relevant.
+    #
+    # # First, check if the text ends with a typical sentence ending
+    # has_sentence_ending = bool(re.search(r'[.!?。！？]\s*$', text))
+    #
+    # # Remove dots in abbreviations
+    # # 1. Dot between letters (e.g., "J.K." -> "JK")
+    # text = re.sub(r'(?<=[A-Za-z])\.(?=[A-Za-z])', '', text)
+    #
+    # # 2. Dot after letter followed by space and uppercase (e.g., "Dr. Smith" -> "Dr Smith")
+    # text = re.sub(r'(?<=[A-Za-z])\.(?=\s+[A-Z])', '', text)
+    #
+    # # 3. Dot at the end after uppercase letters (abbreviations like "U.S.A.")
+    # # Only if it doesn't look like a sentence ending
+    # if not has_sentence_ending or not re.search(r'[a-z]\.\s*$', text):
+    #     text = re.sub(r'(?<=[A-Z])\.(?=\s*$)', '', text)
 
     # Remove other punctuation marks
     for char, replacement in TTS_PUNCTUATION_TO_REMOVE.items():
