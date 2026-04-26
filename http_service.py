@@ -110,6 +110,7 @@ def build_app(tts: IndexTTS2) -> FastAPI:
                     text=text,
                     output_path=wav_abs,
                     stream_return=False,
+                    interval_silence=0,
                 )
             except Exception as e:
                 logger.exception("synthesize failed task_id=%s", task_id)
