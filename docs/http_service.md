@@ -20,6 +20,8 @@ Available options:
 --host          bind address (default: 0.0.0.0)
 --port          listen port (default: 37861)
 --model_dir     path to model checkpoints (default: ./checkpoints)
+--output_root   output directory for generated wav/srt files
+--speaker_audio default speaker reference wav file
 --fp16          enable FP16 inference (default: on)
 --deepspeed     enable DeepSpeed acceleration (default: off)
 --cuda_kernel   enable compiled CUDA kernels (default: off)
@@ -46,7 +48,7 @@ Synthesize speech from text. The request blocks until synthesis is complete.
 }
 ```
 
-Both paths are relative to `OUTPUT_ROOT` (`/home/fanrui/agbox-paseo-shared/read-only/indextts2_service_voices`) and are meant to be served via filehub.
+Both paths are relative to `--output_root` and are meant to be served via filehub.
 
 **Errors**
 
