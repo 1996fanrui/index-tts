@@ -4,5 +4,5 @@
 
 ## 启动 HTTP 服务
 
-只用 `.venv/bin/python http_service.py` 启动，**不要用 `uv run`**。
-原因：`uv run` 每次都做依赖解析，当前 `deepspeed` extra 与 `descript-audiotools` 在 protobuf/grpcio-health-checking 版本上冲突，会空转几十秒后失败。`.venv` 里的依赖已可直接跑。
+默认使用 `uv run python http_service.py` 启动。
+`uv run` 在项目目录下会使用当前项目 `.venv`，并在运行前按 lock 同步依赖；只有临时诊断且明确需要跳过 uv 同步时，才直接使用 `.venv/bin/python http_service.py`。

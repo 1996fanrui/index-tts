@@ -7,7 +7,7 @@ Tutorial:
 Endpoint:
     POST /synthesize  body: {"text": "..."}  returns {"wav_path": "...", "srt_path": "..."}
 
-Paths in the response are relative to OUTPUT_ROOT and meant to be served via filehub.
+Paths in the response are relative to --output_root and meant to be served via filehub.
 """
 
 import argparse
@@ -38,7 +38,6 @@ DEFAULT_SPEAKER_AUDIO = (
     "en-US-AndrewMultilingual-Relieved-Audio.wav"
 )
 DEFAULT_MODEL_DIR = os.path.join(current_dir, "checkpoints")
-DEFAULT_CFG_PATH = os.path.join(DEFAULT_MODEL_DIR, "config.yaml")
 
 logger = logging.getLogger("indextts2.http")
 
@@ -57,6 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=37861)
     parser.add_argument("--model_dir", default=DEFAULT_MODEL_DIR)
+    parser.add_argument("--output_root", default=OUTPUT_ROOT)
+    parser.add_argument("--speaker_audio", default=DEFAULT_SPEAKER_AUDIO)
     parser.add_argument("--fp16", action="store_true", default=True)
     parser.add_argument("--deepspeed", action="store_true", default=False)
     parser.add_argument("--cuda_kernel", action="store_true", default=False)
@@ -72,12 +73,12 @@ def validate_model_dir(model_dir: str) -> None:
         raise SystemExit(f"Missing model files in {model_dir}: {missing}")
 
 
-def validate_speaker_audio() -> None:
-    if not os.path.isfile(DEFAULT_SPEAKER_AUDIO):
-        raise SystemExit(f"Default speaker audio not found: {DEFAULT_SPEAKER_AUDIO}")
+def validate_speaker_audio(speaker_audio: str) -> None:
+    if not os.path.isfile(speaker_audio):
+        raise SystemExit(f"Default speaker audio not found: {speaker_audio}")
 
 
-def build_app(tts: IndexTTS2) -> FastAPI:
+def build_app(tts: IndexTTS2, output_root: str, speaker_audio: str) -> FastAPI:
     app = FastAPI(title="IndexTTS2 HTTP Service")
     # Process-wide lock: GPU inference must run one at a time.
     inference_lock = asyncio.Lock()
@@ -91,13 +92,13 @@ def build_app(tts: IndexTTS2) -> FastAPI:
         task_id = uuid.uuid4().hex
         date_dir = datetime.datetime.utcnow().strftime("%Y%m%d")
         rel_dir = os.path.join(date_dir, task_id)
-        abs_dir = os.path.join(OUTPUT_ROOT, rel_dir)
+        abs_dir = os.path.join(output_root, rel_dir)
         os.makedirs(abs_dir, exist_ok=True)
 
         wav_rel = os.path.join(rel_dir, "0.wav")
         srt_rel = os.path.join(rel_dir, "0.srt")
-        wav_abs = os.path.join(OUTPUT_ROOT, wav_rel)
-        srt_abs = os.path.join(OUTPUT_ROOT, srt_rel)
+        wav_abs = os.path.join(output_root, wav_rel)
+        srt_abs = os.path.join(output_root, srt_rel)
 
         logger.info("synthesize task_id=%s text_len=%d", task_id, len(text))
 
@@ -106,7 +107,7 @@ def build_app(tts: IndexTTS2) -> FastAPI:
             try:
                 await asyncio.to_thread(
                     tts.infer,
-                    spk_audio_prompt=DEFAULT_SPEAKER_AUDIO,
+                    spk_audio_prompt=speaker_audio,
                     text=text,
                     output_path=wav_abs,
                     stream_return=False,
@@ -134,8 +135,8 @@ def main() -> None:
 
     args = parse_args()
     validate_model_dir(args.model_dir)
-    validate_speaker_audio()
-    os.makedirs(OUTPUT_ROOT, exist_ok=True)
+    validate_speaker_audio(args.speaker_audio)
+    os.makedirs(args.output_root, exist_ok=True)
 
     logger.info("loading IndexTTS2 model from %s", args.model_dir)
     tts = IndexTTS2(
@@ -147,7 +148,7 @@ def main() -> None:
     )
     logger.info("model loaded")
 
-    app = build_app(tts)
+    app = build_app(tts, args.output_root, args.speaker_audio)
     uvicorn.run(app, host=args.host, port=args.port, workers=1, log_level="info")
 
 
